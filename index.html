@@ -500,7 +500,7 @@ applyTheme(store.get('theme',matchMedia('(prefers-color-scheme: dark)').matches?
 const cached=store.get('icsText','');
 if(cached){try{loadICS(cached);}catch(e){console.error(e);}}
 const last=store.get('lastSync',0);
-if(last)setStatus('Dernière synchro : '+newDate(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
+if(last)setStatus('Dernière synchro : '+new Date(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
 render();
 if(store.get('icsUrl',''))refresh();
 setInterval(refresh,10*60000);
