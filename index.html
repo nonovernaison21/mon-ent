@@ -269,9 +269,21 @@ async function refresh(){
   if(!url){setStatus('Aucun lien ICS');return;}
   try{
     setStatus('Actualisation...');
-    const r=await fetch(url.replace(/^webcal:/i,'https:'),{cache:'no-store'});
-    if(!r.ok)throw new Error('Le calendrier a répondu '+r.status+' (lien expiré ?)');
-    const text=await r.text();
+    const relay=store.get('relay','');
+    let text;
+    if(relay){
+      const r=await fetch(relay+(relay.includes('?')?'&':'?')+'url='+encodeURIComponent(url),{headers:{'X-Key':store.get('relayKey','')},cache:'no-store'});
+      if(!r.ok){
+        let m='Erreur '+r.status;
+        try{const j=await r.json();if(j.error)m=j.error;}catch(e){}
+        throw new Error(m);
+      }
+      text=await r.text();
+    }else{
+      const r=await fetch(url.replace(/^webcal:/i,'https:'),{cache:'no-store'});
+      if(!r.ok)throw new Error('Le calendrier a répondu '+r.status+' (lien expiré ?)');
+      text=await r.text();
+    }
     if(!text.includes('BEGIN:VCALENDAR'))throw new Error("Ce lien ne renvoie pas un calendrier ICS");
     loadICS(text);
     store.set('icsText',text);
@@ -279,7 +291,7 @@ async function refresh(){
     store.set('lastSync',Date.now());
     setStatus('Synchronisé à '+fmtTime(new Date()));
   }catch(e){
-    const msg=e instanceof TypeError?'lecture du lien bloquée par le navigateur, importe le fichier .ics':e.message;
+    const msg=e instanceof TypeError?(store.get('relay','')?'relais injoignable, vérifie son adresse':'lecture du lien bloquée par le navigateur, configure le relais dans les réglages'):e.message;
     setStatus('Échec : '+msg+(events.length?' (données en cache)':''),true);
   }
   if(view==='set'){const d=$('#diag');if(d)d.innerHTML=diagHtml();}
@@ -403,9 +415,14 @@ function viewSet(){
   return `<h1>Réglages</h1>
   <form class="card" data-form="url"><h2>Lien ICS</h2>
     <div class="row"><input id="icsUrl" type="url" placeholder="https://... ou webcal://..." value="${esc(url)}" autocomplete="off" required><button class="btn primary">Enregistrer et synchroniser</button></div>
-    <p class="m">Version de test : le navigateur lit le lien directement, et beaucoup de serveurs de calendrier le refusent. Dans ce cas, télécharge le fichier .ics depuis ton ENT et importe-le ici. Le lien reste dans ce navigateur, traite-le comme un mot de passe.</p>
+    <p class="m">Sans relais, le navigateur refuse la plupart des liens. Configure le relais plus bas, ou importe un fichier .ics. Le lien reste dans ce navigateur, traite-le comme un mot de passe.</p>
     <div class="row"><label class="btn">Ou importer un fichier .ics<input id="icsFile" type="file" accept=".ics,text/calendar" hidden></label>
     <button type="button" class="btn" data-act="sync">Actualiser maintenant</button><button type="button" class="btn" data-act="demo">Charger un exemple</button></div>
+  </form>
+  <form class="card" data-form="relay"><h2>Relais de synchronisation</h2>
+    <div class="row"><input id="relayUrl" type="url" placeholder="https://mon-ent-relais.xxx.workers.dev" value="${esc(store.get('relay',''))}" autocomplete="off"></div>
+    <div class="row"><input id="relayKey" type="password" placeholder="Clé d'accès du relais" value="${esc(store.get('relayKey',''))}" autocomplete="off"><button class="btn primary">Enregistrer</button></div>
+    <p class="m">Le relais lit ton lien à la place du navigateur. Il sert à la synchro automatique.</p>
   </form>
   <div class="card"><h2>Notifications</h2>
     <div class="row"><label><input type="checkbox" id="notifOn" ${n.on?'checked':''}> Rappel avant chaque cours</label>
@@ -486,7 +503,7 @@ document.addEventListener('click',e=>{
   else if(a==='hwdel'){hw=hw.filter(x=>x.id!==t.dataset.id);saveHw();render();}
   else if(a==='wipe'){
     if(confirm('Effacer le lien, le calendrier en cache et tous les devoirs ?')){
-      ['icsUrl','icsText','lastSync','homework','notif','demo','hwNotified'].forEach(k=>{try{localStorage.removeItem(k);}catch(e){}});
+      ['icsUrl','icsText','lastSync','homework','notif','demo','hwNotified','relay','relayKey'].forEach(k=>{try{localStorage.removeItem(k);}catch(e){}});
       hw=[];events=[];info=null;setStatus('Données effacées');render();
     }
   }
@@ -501,6 +518,11 @@ document.addEventListener('submit',e=>{
   }else if(f==='url'){
     store.set('icsUrl',$('#icsUrl').value.trim());
     refresh();
+  }else if(f==='relay'){
+    store.set('relay',$('#relayUrl').value.trim().replace(/\/+$/,''));
+    store.set('relayKey',$('#relayKey').value);
+    setStatus('Relais enregistré');
+    if(store.get('icsUrl',''))refresh();
   }
 });
 document.addEventListener('change',async e=>{
@@ -555,7 +577,7 @@ const last=store.get('lastSync',0);
 if(last)setStatus('Dernière synchro : '+new Date(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
 render();
 if(store.get('icsUrl',''))refresh();
-setInterval(refresh,15*60000);
+setInterval(refresh,10*60000);
 setInterval(()=>{if(view==='home'||view==='day')render();checkNotifs();},30000);
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='visible'&&Date.now()-store.get('lastSync',0)>5*60000&&store.get('icsUrl',''))refresh();
