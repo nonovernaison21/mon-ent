@@ -4,18 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
-<title>MonENT - Espace Lycée</title>
-<!-- Favicon / Logo de l'onglet du navigateur -->
-<link rel="icon" type="image/png" href="logo.png">
+<title>Lapsus - Espace Lycée</title>
+<!-- Icône de l'onglet du navigateur -->
+<link rel="icon" type="image/png" href="favicon.png">
 <!-- Feuille de style externe -->
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <!-- Logo externe importé (assure-toi d'avoir un fichier logo.png à la racine) -->
-  <img src="logo.png" alt="Logo" class="site-logo" onerror="this.style.display='none'">
+  <!-- Le logo texte "Lapsus" dans l'en-tête du site -->
+  <img src="logo-text.png" alt="Logo Lapsus" class="site-logo" onerror="this.style.display='none'">
   <div class="brand-container">
-      <div class="brand">MonENT</div>
+      <div class="brand">Lapsus</div>
       <div class="brand-sub">Alternative Lycée</div>
   </div>
   <div class="status" id="status"></div>
@@ -385,7 +385,7 @@ function demoICS(){
     [[0,'ANGLAIS','A12'],[1,'NSI','Salle info 2'],[2,'EPS','Gymnase']]
   ];
   const mon=mondayOf(new Date());
-  const L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Mon ENT//Exemple//FR','X-WR-CALNAME:Exemple','X-WR-TIMEZONE:Europe/Paris'];
+  const L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Lapsus//Exemple//FR','X-WR-CALNAME:Exemple','X-WR-TIMEZONE:Europe/Paris'];
   let n=0;
   for(let w=-1;w<=2;w++)for(let d=0;d<5;d++){
     const day=addDays(mon,w*7+d),ymd=day.getFullYear()+pad(day.getMonth()+1)+pad(day.getDate());
@@ -504,7 +504,7 @@ applyTheme(store.get('theme',matchMedia('(prefers-color-scheme: dark)').matches?
 const cached=store.get('icsText','');
 if(cached){try{loadICS(cached);}catch(e){console.error(e);}}
 const last=store.get('lastSync',0);
-if(last)setStatus('Dernière synchro : '+new Date(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
+if(last)setStatus('Dernière synchro : '+newDate(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
 render();
 if(store.get('icsUrl',''))refresh();
 setInterval(refresh,10*60000);
