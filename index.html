@@ -5,19 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
 <title>Lapsus - Espace Lycée</title>
-<!-- Lien vers ton icône de navigateur -->
-<link rel="icon" type="image/jpg" href="favicon.jpg">
-<!-- Lien vers ton fichier CSS séparé -->
+<!-- Icône de l'onglet du navigateur -->
+<link rel="icon" type="image/png" href="favicon.png">
+<!-- Feuille de style externe -->
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <!-- Lien vers ton logo texte (ou image de logo) dans l'en-tête -->
-  <img src="logo-text.jpg" alt="Logo Lapsus" class="site-logo" onerror="this.style.display='none'">
-  <div class="brand-container">
-      <div class="brand">Lapsus</div>
-      <div class="brand-sub">Alternative Lycée</div>
-  </div>
+  <!-- Logo texte "Lapsus" dans l'en-tête -->
+  <img src="logo-text.png" alt="Lapsus" class="site-logo" onerror="this.style.display='none'">
   <div class="status" id="status"></div>
   <button class="btn" data-act="theme" title="Changer de thème">Thème</button>
 </header>
@@ -504,7 +500,7 @@ applyTheme(store.get('theme',matchMedia('(prefers-color-scheme: dark)').matches?
 const cached=store.get('icsText','');
 if(cached){try{loadICS(cached);}catch(e){console.error(e);}}
 const last=store.get('lastSync',0);
-if(last)setStatus('Dernière synchro : '+new Date(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
+if(last)setStatus('Dernière synchro : '+newDate(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
 render();
 if(store.get('icsUrl',''))refresh();
 setInterval(refresh,10*60000);
