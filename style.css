@@ -7,6 +7,13 @@ button,input,select{font:inherit;color:inherit}
 button{cursor:pointer}
 header{display:flex;align-items:center;gap:12px;padding:14px 0;max-width:980px;margin:auto}
 .site-logo{height:38px;width:auto;object-fit:contain;background:transparent;border:none;}
+.site-logo {
+    height: 32px;
+    width: auto;
+    object-fit: contain;
+    background: transparent !important;
+    border: none !important;
+}
 .brand-container{display:flex;flex-direction:column}
 .brand{font-weight:700;font-size:17px;line-height:1.2}
 .brand-sub{font-size:11px;color:var(--muted)}
