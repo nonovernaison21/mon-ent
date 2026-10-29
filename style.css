@@ -125,6 +125,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:2px;
 .hb{flex:1;min-width:0}
 .ht{font-weight:500;overflow-wrap:anywhere}
 .hw.done .ht{text-decoration:line-through;color:var(--muted)}
+.hw.control-item.done .ht{text-decoration:line-through;color:var(--muted)}
 .late{color:var(--danger)}
 .soon{color:var(--warn)}
 .add{margin:16px 0 0}
@@ -151,6 +152,21 @@ input:focus,select:focus{border-color:var(--accent)}
 input[type=checkbox]{appearance:none;-webkit-appearance:none;position:relative;flex:none;width:22px;height:22px;padding:0;margin:0;border:1.8px solid var(--muted);border-radius:50%;background:none;cursor:pointer}
 input[type=checkbox]:checked{background:var(--accent);border-color:var(--accent)}
 input[type=checkbox]:checked::after{content:"";position:absolute;inset:0;background:var(--on);-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5.5 12.5 4.2 4.2L18.5 8'/%3E%3C/svg%3E") center/16px no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5.5 12.5 4.2 4.2L18.5 8'/%3E%3C/svg%3E") center/16px no-repeat}
+
+/* ---- Écran de connexion ---- */
+[hidden]{display:none!important}
+body.locked .top,body.locked .shell{display:none}
+#gate{min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:24px 0}
+.gate-card{width:100%;max-width:400px;background:var(--surface);border:1px solid var(--line);border-radius:22px;padding:28px 24px}
+.gate-brand{display:flex;align-items:center;gap:10px;font:700 24px/1 var(--f-display);letter-spacing:-.01em;margin-bottom:6px}
+.gate-brand img{display:block;width:32px;height:32px}
+.gate-card .sub{margin:0 0 18px}
+.gate-card .seg{display:flex;width:100%;margin:0 0 18px}
+.gate-card .seg button{flex:1}
+.gate-card input{width:100%;margin-bottom:14px}
+.gate-card .m{margin:-4px 0 14px}
+.gate-card .btn.primary{width:100%;padding:11px 14px}
+.gate-card #authMessage{color:var(--danger);min-height:1.3em;margin:12px 0 0}
 
 /* ---- Téléphone ---- */
 @media (max-width:760px){
