@@ -1,0 +1,493 @@
+'use strict';
+
+// ---------- Configuration ----------
+// Adresse du relais (Cloudflare Worker) qui lit ton lien ICS à la place du navigateur.
+// Cette adresse n'est pas secrète : le relais n'accepte que ton site et ton ENT.
+const CONFIG={
+  RELAY_URL:'https://ent-relais.nonovernaison21.workers.dev'
+};
+
+/*PARSER-START*/
+const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
+const startOfDay=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate());
+
+// 1. Découpage du fichier en lignes (les lignes longues sont "repliées" dans le format ICS)
+function unfold(t){return t.replace(/\r\n/g,'\n').replace(/\r/g,'\n').replace(/\n[ \t]/g,'').split('\n');}
+
+// 2. Une ligne ICS : NOM;PARAM=val:valeur
+function splitLine(line){
+  let inQ=false,idx=-1;
+  for(let i=0;i<line.length;i++){
+    const c=line[i];
+    if(c==='"')inQ=!inQ;
+    else if(c===':'&&!inQ){idx=i;break;}
+  }
+  if(idx<0)return null;
+  const parts=line.slice(0,idx).split(';');
+  const params={};
+  for(const p of parts.slice(1)){const [k,...v]=p.split('=');params[k.toUpperCase()]=v.join('=').replace(/^"|"$/g,'');}
+  return {name:parts[0].toUpperCase(),params,value:line.slice(idx+1)};
+}
+const unescapeText=s=>s.replace(/\\[nN]/g,'\n').replace(/\\,/g,',').replace(/\\;/g,';').replace(/\\\\/g,'\\');
+
+// 3. Dates et fuseaux horaires
+function tzOffsetMs(utcMs,tz){
+  const f=new Intl.DateTimeFormat('en-US',{timeZone:tz,hourCycle:'h23',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const p=Object.fromEntries(f.formatToParts(new Date(utcMs)).map(x=>[x.type,x.value]));
+  return Date.UTC(+p.year,+p.month-1,+p.day,+p.hour,+p.minute,+p.second)-Math.floor(utcMs/1000)*1000;
+}
+function wallToDate(y,mo,d,h,mi,s,tz){
+  if(!tz)return new Date(y,mo-1,d,h,mi,s);
+  try{
+    const guess=Date.UTC(y,mo-1,d,h,mi,s);
+    let t=guess-tzOffsetMs(guess,tz);
+    t=guess-tzOffsetMs(t,tz);
+    return new Date(t);
+  }catch(e){return new Date(y,mo-1,d,h,mi,s);}
+}
+function parseDate(value,params){
+  const m=value.match(/^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})?(Z)?)?$/);
+  if(!m)return null;
+  const [,Y,M,D,h,mi,s,z]=m;
+  if(h===undefined)return {date:new Date(+Y,+M-1,+D),allDay:true};
+  if(z)return {date:new Date(Date.UTC(+Y,+M-1,+D,+h,+mi,+(s||0))),allDay:false};
+  return {date:wallToDate(+Y,+M,+D,+h,+mi,+(s||0),params&&params.TZID),allDay:false};
+}
+function parseDuration(v){
+  const m=v.match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$/);
+  if(!m)return 0;
+  return ((+m[1]||0)*86400+(+m[2]||0)*3600+(+m[3]||0)*60+(+m[4]||0))*1000;
+}
+
+// 4. Récurrences simples (DAILY et WEEKLY). Beaucoup de flux scolaires n'en ont pas du tout.
+const DAYS=['SU','MO','TU','WE','TH','FR','SA'];
+function expandRule(ev,rule,ex){
+  const r=Object.fromEntries(rule.split(';').map(x=>x.split('=')));
+  const interval=+(r.INTERVAL||1);
+  if(r.FREQ!=='DAILY'&&r.FREQ!=='WEEKLY')return [Object.assign({},ev,{unsupported:true})];
+  const dur=ev.end-ev.start;
+  const until=r.UNTIL?parseDate(r.UNTIL,{}):null;
+  const limit=Math.min(until?until.date.getTime():Infinity,ev.start.getTime()+400*86400000);
+  const by=r.BYDAY?r.BYDAY.split(',').map(x=>DAYS.indexOf(x.slice(-2))):[ev.start.getDay()];
+  const max=+(r.COUNT||Infinity);
+  const day0=startOfDay(ev.start);
+  const mon0=addDays(day0,-((day0.getDay()+6)%7));
+  const out=[];let count=0;
+  for(let d=new Date(day0);d.getTime()<=limit&&count<max&&out.length<1500;d=addDays(d,1)){
+    let ok;
+    if(r.FREQ==='DAILY')ok=Math.round((d-day0)/86400000)%interval===0;
+    else{
+      const mon=addDays(d,-((d.getDay()+6)%7));
+      ok=Math.round((mon-mon0)/(7*86400000))%interval===0&&by.includes(d.getDay());
+    }
+    if(!ok)continue;
+    count++;
+    const st=new Date(d.getFullYear(),d.getMonth(),d.getDate(),ev.start.getHours(),ev.start.getMinutes(),ev.start.getSeconds());
+    if(ex.has(st.getTime()))continue;
+    out.push(Object.assign({},ev,{start:st,end:new Date(st.getTime()+dur),recurring:true}));
+  }
+  return out;
+}
+
+// 5. Construction d'un événement à partir de ses propriétés
+function buildEvents(c){
+  const p=c.props,first=n=>p[n]&&p[n][0];
+  const ds=first('DTSTART');if(!ds)return [];
+  const s=parseDate(ds.value,ds.params);if(!s)return [];
+  const de=first('DTEND'),du=first('DURATION');
+  const e=de&&parseDate(de.value,de.params);
+  const end=e?e.date:new Date(s.date.getTime()+(s.allDay?86400000:(du?parseDuration(du.value):0)));
+  const val=n=>first(n)?first(n).value:'';
+  const ev={
+    uid:val('UID'),
+    title:unescapeText(val('SUMMARY')||'(sans titre)'),
+    location:unescapeText(val('LOCATION')),
+    description:unescapeText(val('DESCRIPTION')),
+    status:val('STATUS').toUpperCase(),
+    allDay:s.allDay,start:s.date,end,
+    props:Object.keys(p),raw:c.raw.join('\n')
+  };
+  const rid=first('RECURRENCE-ID');
+  if(rid){const r=parseDate(rid.value,rid.params);if(r)ev.override=r.date.getTime();}
+  const rr=first('RRULE');
+  if(!rr)return [ev];
+  const ex=new Set();
+  for(const x of (p['EXDATE']||[]))for(const v of x.value.split(',')){const d=parseDate(v,x.params);if(d)ex.add(d.date.getTime());}
+  return expandRule(ev,rr.value,ex);
+}
+
+function parseICS(text){
+  const events=[],cal={};
+  let cur=null,alarm=0;
+  for(const line of unfold(text)){
+    const L=line.trimEnd();
+    if(L==='BEGIN:VEVENT'){cur={raw:[],props:{}};continue;}
+    if(L==='END:VEVENT'){if(cur)events.push(...buildEvents(cur));cur=null;continue;}
+    if(L==='BEGIN:VALARM'){alarm++;continue;}
+    if(L==='END:VALARM'){alarm=Math.max(0,alarm-1);continue;}
+    if(alarm)continue; // on ignore les rappels intégrés au fichier
+    const pl=splitLine(L);if(!pl)continue;
+    if(cur){cur.raw.push(L);(cur.props[pl.name]=cur.props[pl.name]||[]).push(pl);}
+    else cal[pl.name]=pl.value;
+  }
+  // Un événement modifié (RECURRENCE-ID) remplace l'occurrence d'origine
+  const ov=new Set(events.filter(e=>e.override).map(e=>e.uid+'|'+e.override));
+  return {events:events.filter(e=>!(e.recurring&&ov.has(e.uid+'|'+e.start.getTime()))),cal};
+}
+/*PARSER-END*/
+
+// ---------- Utilitaires ----------
+const $=s=>document.querySelector(s);
+const store={
+  get(k,d){try{const v=localStorage.getItem(k);return v===null?d:JSON.parse(v);}catch(e){return d;}},
+  set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+};
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
+const fmtTime=d=>d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
+const fmtDay=d=>d.toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long'});
+const isoDay=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+const parseISO=s=>{const [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d);};
+const mondayOf=d=>addDays(startOfDay(d),-((d.getDay()+6)%7));
+const sameDay=(a,b)=>a.toDateString()===b.toDateString();
+function hue(s){let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))%360;return h;}
+function rel(ms){const m=Math.max(1,Math.round(ms/60000));if(m<60)return m+' min';return Math.floor(m/60)+' h '+String(m%60).padStart(2,'0');}
+
+// ---------- État ----------
+const VIEWS=[['home','Accueil'],['day','Jour'],['week','Semaine'],['month','Mois'],['hw','Devoirs'],['set','Réglages']];
+let view=store.get('view','home');
+let cursor=startOfDay(new Date());
+let events=[],info=null;
+let hw=store.get('homework',[]);
+let hwShow='todo';
+const saveHw=()=>store.set('homework',hw);
+
+function eventsOn(day){
+  const s=startOfDay(day),e=addDays(s,1);
+  return events.filter(ev=>ev.start<e&&ev.end>s);
+}
+
+function loadICS(text){
+  const r=parseICS(text);
+  events=r.events.sort((a,b)=>a.start-b.start);
+  const props={};
+  events.forEach(e=>new Set(e.props).forEach(k=>props[k]=(props[k]||0)+1));
+  info={
+    count:events.length,
+    min:events[0]?events[0].start:null,
+    max:events.reduce((m,e)=>(!m||e.end>m)?e.end:m,null),
+    props,
+    cancelled:events.filter(e=>e.status==='CANCELLED').length,
+    recurring:events.filter(e=>e.recurring).length,
+    unsupported:events.filter(e=>e.unsupported).length,
+    withLoc:events.filter(e=>e.location).length,
+    withDesc:events.filter(e=>e.description).length,
+    titles:new Set(events.map(e=>e.title)).size,
+    sample:events.find(e=>e.description)||events[0]||null
+  };
+}
+
+// ---------- Synchronisation ----------
+function setStatus(t,err){const s=$('#status');s.textContent=t;s.className='status'+(err?' err':'');}
+async function refresh(){
+  const url=store.get('icsUrl','');
+  if(!url){setStatus('Aucun lien ICS');return;}
+  try{
+    setStatus('Actualisation...');
+    const r=await fetch(CONFIG.RELAY_URL+'?url='+encodeURIComponent(url),{cache:'no-store'});
+    if(!r.ok){
+      let m='Erreur '+r.status;
+      try{const j=await r.json();if(j.error)m=j.error;}catch(e){}
+      throw new Error(m);
+    }
+    const text=await r.text();
+    if(!text.includes('BEGIN:VCALENDAR'))throw new Error("Ce lien ne renvoie pas un calendrier ICS");
+    loadICS(text);
+    store.set('icsText',text);
+    store.set('demo',false);
+    store.set('lastSync',Date.now());
+    setStatus('Synchronisé à '+fmtTime(new Date()));
+  }catch(e){
+    const msg=e instanceof TypeError?'connexion impossible, vérifie ton réseau et réessaie':e.message;
+    setStatus('Échec : '+msg+(events.length?' (données en cache)':''),true);
+  }
+  if(view==='set'){const d=$('#diag');if(d)d.innerHTML=diagHtml();}
+  else if(view!=='hw')render();
+}
+
+// ---------- Composants ----------
+function evCard(ev,withDate){
+  const now=new Date();
+  const when=ev.allDay?'Toute la journée':`${fmtTime(ev.start)} - ${fmtTime(ev.end)}`;
+  const cancelled=ev.status==='CANCELLED';
+  const live=!ev.allDay&&!cancelled&&ev.start<=now&&ev.end>now;
+  return `<div class="ev${cancelled?' cancelled':''}" style="--h:${hue(ev.title)}">
+    <div class="t">${esc(ev.title)}${cancelled?'<span class="badge">Annulé</span>':''}${live?'<span class="badge now">En cours</span>':''}</div>
+    <div class="m">${withDate?esc(cap(fmtDay(ev.start)))+' · ':''}${when}${ev.location?' · '+esc(ev.location):''}</div>
+    ${ev.description?`<details><summary class="m">Détails</summary><div class="m" style="white-space:pre-wrap">${esc(ev.description)}</div></details>`:''}
+  </div>`;
+}
+function dueLabel(iso){
+  const n=Math.round((parseISO(iso)-startOfDay(new Date()))/86400000);
+  if(n<0)return {t:`en retard (${-n} j)`,c:'late'};
+  if(n===0)return {t:"aujourd'hui",c:'soon'};
+  if(n===1)return {t:'demain',c:'soon'};
+  return {t:parseISO(iso).toLocaleDateString('fr-FR',{weekday:'short',day:'numeric',month:'short'}),c:''};
+}
+function hwRow(h){
+  const d=dueLabel(h.due);
+  return `<div class="hw${h.done?' done':''}">
+    <input type="checkbox" data-act="hwtoggle" data-id="${esc(h.id)}" ${h.done?'checked':''}>
+    <div style="flex:1"><div class="ht">${esc(h.title)}</div>
+    <div class="m">${h.subject?esc(h.subject)+' · ':''}<span class="${d.c}">${esc(d.t)}</span></div></div>
+    <button class="btn" data-act="hwdel" data-id="${esc(h.id)}" title="Supprimer">✕</button>
+  </div>`;
+}
+const byDue=(a,b)=>a.due.localeCompare(b.due);
+const navBar=(title)=>`<div class="bar"><button class="btn" data-act="prev">‹</button><h1>${esc(title)}</h1><button class="btn" data-act="today">Aujourd'hui</button><button class="btn" data-act="next">›</button></div>`;
+
+// ---------- Vues ----------
+function viewHome(){
+  if(!events.length)return `<h1>Bienvenue</h1><div class="card"><p>Aucun calendrier chargé. Charge un exemple pour voir l'interface, ou importe ton fichier .ics dans les réglages.</p><div class="row"><button class="btn primary" data-act="demo">Charger un exemple</button><button class="btn" data-act="view" data-v="set">Ouvrir les réglages</button></div></div>`;
+  const now=new Date();
+  const act=events.filter(e=>!e.allDay&&e.status!=='CANCELLED');
+  const cur=act.find(e=>e.start<=now&&e.end>now);
+  const nxt=act.find(e=>e.start>now);
+  const today=eventsOn(now);
+  const real=today.filter(e=>!e.allDay&&e.status!=='CANCELLED');
+  const resume=real.length?`${real.length} cours, de ${fmtTime(real[0].start)} à ${fmtTime(real.reduce((m,e)=>e.end>m?e.end:m,real[0].end))}`:"Pas de cours aujourd'hui";
+  const nxtWhen=nxt?(sameDay(nxt.start,now)?'dans '+rel(nxt.start-now):cap(fmtDay(nxt.start))+' à '+fmtTime(nxt.start)):'';
+  const todo=hw.filter(h=>!h.done).sort(byDue).slice(0,5);
+  return `<h1>${esc(cap(fmtDay(now)))}</h1>
+  <p class="muted" style="margin-top:-8px">${esc(resume)}${store.get('demo',false)?' · exemple fictif':''}</p>
+  <div class="grid2">
+    <div class="card"><h2>En ce moment</h2>${cur?evCard(cur):'<p class="muted" style="margin:0">Pas de cours en ce moment.</p>'}</div>
+    <div class="card"><h2>Prochain cours ${nxt?'· '+esc(nxtWhen):''}</h2>${nxt?evCard(nxt):'<p class="muted" style="margin:0">Aucun cours à venir dans le calendrier.</p>'}</div>
+  </div>
+  <div class="card"><h2>Aujourd'hui</h2>${today.length?today.map(e=>evCard(e)).join(''):'<p class="muted" style="margin:0">Rien de prévu.</p>'}</div>
+  <div class="card"><h2>Devoirs à faire</h2>${todo.length?todo.map(hwRow).join(''):'<p class="muted" style="margin:0">Aucun devoir en attente.</p>'}</div>`;
+}
+function viewDay(){
+  const list=eventsOn(cursor);
+  const due=hw.filter(h=>!h.done&&h.due===isoDay(cursor));
+  return navBar(cap(fmtDay(cursor)))+
+    `<div class="card">${list.length?list.map(e=>evCard(e)).join(''):'<p class="muted" style="margin:0">Pas de cours ce jour.</p>'}</div>`+
+    (due.length?`<div class="card"><h2>Devoirs pour ce jour</h2>${due.map(hwRow).join('')}</div>`:'');
+}
+function viewWeek(){
+  const mon=mondayOf(cursor);
+  const f=d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
+  let cards='';
+  for(let i=0;i<7;i++){
+    const d=addDays(mon,i),list=eventsOn(d);
+    if(i>=5&&!list.length)continue;
+    cards+=`<div class="card"><h2>${esc(cap(d.toLocaleDateString('fr-FR',{weekday:'long',day:'numeric'})))}</h2>${list.length?list.map(e=>evCard(e)).join(''):'<p class="muted" style="margin:0">Rien.</p>'}</div>`;
+  }
+  return navBar(`${f(mon)} - ${f(addDays(mon,6))}`)+`<div class="weekgrid">${cards}</div>`;
+}
+function viewMonth(){
+  const y=cursor.getFullYear(),m=cursor.getMonth();
+  const last=new Date(y,m+1,0);
+  let d=mondayOf(new Date(y,m,1));
+  let cells=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map(x=>`<div class="dow">${x}</div>`).join('');
+  const dueDays=new Set(hw.filter(h=>!h.done).map(h=>h.due));
+  while(d<=last){
+    for(let i=0;i<7;i++){
+      const list=eventsOn(d).filter(e=>e.status!=='CANCELLED');
+      const hues=[...new Set(list.map(e=>hue(e.title)))].slice(0,6);
+      cells+=`<button class="cell${d.getMonth()!==m?' out':''}${sameDay(d,new Date())?' today':''}" data-act="gotoday" data-d="${isoDay(d)}">
+        <span>${d.getDate()}</span>
+        <span class="dots">${hues.map(h=>`<i class="dot" style="--h:${h}"></i>`).join('')}${dueDays.has(isoDay(d))?'<i class="hwdot"></i>':''}</span>
+      </button>`;
+      d=addDays(d,1);
+    }
+  }
+  return navBar(cap(cursor.toLocaleDateString('fr-FR',{month:'long',year:'numeric'})))+`<div class="month">${cells}</div>`;
+}
+function viewHw(){
+  const todo=hw.filter(h=>!h.done).sort(byDue),done=hw.filter(h=>h.done).sort((a,b)=>byDue(b,a));
+  const items=hwShow==='todo'?todo:done;
+  const subjects=[...new Set(events.map(e=>e.title))].sort();
+  return `<h1>Devoirs</h1>
+  <form class="card" data-form="hw"><h2>Ajouter</h2>
+    <div class="row"><input name="title" placeholder="Ex : exercices 3 à 5 page 42" required>
+    <input name="subject" list="subs" placeholder="Matière"><datalist id="subs">${subjects.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
+    <input name="due" type="date" required value="${isoDay(addDays(startOfDay(new Date()),1))}">
+    <button class="btn primary">Ajouter</button></div>
+  </form>
+  <div class="row"><button class="btn${hwShow==='todo'?' on':''}" data-act="hwshow" data-v="todo">À faire (${todo.length})</button>
+  <button class="btn${hwShow==='done'?' on':''}" data-act="hwshow" data-v="done">Faits (${done.length})</button></div>
+  <div class="card">${items.length?items.map(hwRow).join(''):'<p class="muted" style="margin:0">Rien ici.</p>'}</div>`;
+}
+function diagHtml(){
+  if(!info)return '<p class="muted">Aucune donnée chargée pour l\'instant.</p>';
+  const fmt=d=>d?d.toLocaleDateString('fr-FR'):'n/a';
+  const rows=Object.entries(info.props).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${v} / ${info.count}</td></tr>`).join('');
+  return `<p>${info.count} événements du ${fmt(info.min)} au ${fmt(info.max)}. ${info.titles} intitulés différents. ${info.cancelled} annulés. ${info.withLoc} avec un lieu, ${info.withDesc} avec une description. ${info.recurring} issus de règles de récurrence.${info.unsupported?` <b class="late">${info.unsupported} règles de récurrence non gérées.</b>`:''}</p>
+  <table><tr><th>Champ ICS</th><th>Présent dans</th></tr>${rows}</table>
+  ${info.sample?`<p class="muted">Exemple brut :</p><pre>${esc(info.sample.raw.slice(0,1500))}</pre>`:''}`;
+}
+function viewSet(){
+  const url=store.get('icsUrl',''),n=store.get('notif',{on:false,min:10});
+  return `<h1>Réglages</h1>
+  <form class="card" data-form="url"><h2>Lien ICS</h2>
+    <div class="row"><input id="icsUrl" type="url" placeholder="https://... ou webcal://..." value="${esc(url)}" autocomplete="off" required><button class="btn primary">Enregistrer et synchroniser</button></div>
+    <p class="m">Le lien reste dans ce navigateur et ne passe que par le relais du site. Traite-le comme un mot de passe. Si la synchro échoue, tu peux importer un fichier .ics.</p>
+    <div class="row"><label class="btn">Ou importer un fichier .ics<input id="icsFile" type="file" accept=".ics,text/calendar" hidden></label>
+    <button type="button" class="btn" data-act="sync">Actualiser maintenant</button><button type="button" class="btn" data-act="demo">Charger un exemple</button></div>
+  </form>
+  <div class="card"><h2>Notifications</h2>
+    <div class="row"><label><input type="checkbox" id="notifOn" ${n.on?'checked':''}> Rappel avant chaque cours</label>
+    <select id="notifMin">${[5,10,15,30].map(x=>`<option value="${x}"${x===n.min?' selected':''}>${x} min avant</option>`).join('')}</select></div>
+    <p class="m" style="margin:0">Fonctionne seulement tant que cette page reste ouverte. Un rappel des devoirs de demain est aussi envoyé après 18 h.</p>
+  </div>
+  <div class="card"><h2>Ce que contient ton flux</h2><div id="diag">${diagHtml()}</div></div>
+  <div class="card"><h2>Données locales</h2>
+    <button class="btn" data-act="wipe">Tout effacer (lien, calendrier, devoirs)</button></div>`;
+}
+
+function render(){
+  $('#nav').innerHTML=VIEWS.map(([k,l])=>`<button class="tab${k===view?' on':''}" data-act="view" data-v="${k}">${l}</button>`).join('');
+  const f={home:viewHome,day:viewDay,week:viewWeek,month:viewMonth,hw:viewHw,set:viewSet}[view]||viewHome;
+  $('#main').innerHTML=f();
+}
+
+// ---------- Calendrier d'exemple ----------
+function demoICS(){
+  const pad=n=>String(n).padStart(2,'0');
+  const slots=[['0800','0955'],['1010','1205'],['1400','1555']];
+  const plan=[
+    [[0,'MATHEMATIQUES','B204'],[1,'NSI','Salle info 2'],[2,'PHYSIQUE-CHIMIE','C101']],
+    [[0,'SCIENCES INGENIEUR','Labo SI'],[1,'MATHEMATIQUES','B204'],[2,'ANGLAIS','A12']],
+    [[0,'NSI','Salle info 2'],[1,'HISTOIRE-GEOGRAPHIE','A07']],
+    [[0,'PHYSIQUE-CHIMIE','C101'],[1,'SCIENCES INGENIEUR','Labo SI'],[2,'MATHEMATIQUES','B204']],
+    [[0,'ANGLAIS','A12'],[1,'NSI','Salle info 2'],[2,'EPS','Gymnase']]
+  ];
+  const mon=mondayOf(new Date());
+  const L=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//Lapsus//Exemple//FR','X-WR-CALNAME:Exemple','X-WR-TIMEZONE:Europe/Paris'];
+  let n=0;
+  for(let w=-1;w<=2;w++)for(let d=0;d<5;d++){
+    const day=addDays(mon,w*7+d),ymd=day.getFullYear()+pad(day.getMonth()+1)+pad(day.getDate());
+    for(const [s,title,room] of plan[d]){
+      L.push('BEGIN:VEVENT','UID:demo-'+(n++),
+        'DTSTART;TZID=Europe/Paris:'+ymd+'T'+slots[s][0]+'00',
+        'DTEND;TZID=Europe/Paris:'+ymd+'T'+slots[s][1]+'00',
+        'SUMMARY:'+title,'LOCATION:'+room,'DESCRIPTION:Exemple fictif');
+      if(w===1&&d===3&&s===2)L.push('STATUS:CANCELLED');
+      L.push('END:VEVENT');
+    }
+  }
+  L.push('END:VCALENDAR');
+  return L.join('\n');
+}
+function loadDemo(){
+  const t=demoICS();
+  loadICS(t);store.set('icsText',t);store.set('demo',true);
+  if(!hw.length){
+    const a=isoDay(addDays(startOfDay(new Date()),1)),b=isoDay(addDays(startOfDay(new Date()),3));
+    hw=[{id:'ex1',title:'Exercices 3 à 5 page 42 (exemple)',subject:'MATHEMATIQUES',due:a,done:false},{id:'ex2',title:'Rapport de TP (exemple)',subject:'PHYSIQUE-CHIMIE',due:b,done:false}];
+    saveHw();
+  }
+  setStatus('Exemple chargé');
+  render();
+}
+
+// ---------- Actions ----------
+function applyTheme(t){document.documentElement.dataset.theme=t;store.set('theme',t);}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-act]');if(!t)return;
+  const a=t.dataset.act;
+  if(a==='view'){view=t.dataset.v;store.set('view',view);render();}
+  else if(a==='prev'||a==='next'){
+    const n=a==='next'?1:-1;
+    if(view==='day')cursor=addDays(cursor,n);
+    else if(view==='week')cursor=addDays(cursor,7*n);
+    else if(view==='month')cursor=new Date(cursor.getFullYear(),cursor.getMonth()+n,1);
+    render();
+  }
+  else if(a==='today'){cursor=startOfDay(new Date());render();}
+  else if(a==='gotoday'){cursor=parseISO(t.dataset.d);view='day';store.set('view',view);render();}
+  else if(a==='theme'){applyTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}
+  else if(a==='sync'){refresh();}
+  else if(a==='demo'){loadDemo();}
+  else if(a==='hwshow'){hwShow=t.dataset.v;render();}
+  else if(a==='hwtoggle'){const h=hw.find(x=>x.id===t.dataset.id);if(h){h.done=!h.done;saveHw();render();}}
+  else if(a==='hwdel'){hw=hw.filter(x=>x.id!==t.dataset.id);saveHw();render();}
+  else if(a==='wipe'){
+    if(confirm('Effacer le lien, le calendrier en cache et tous les devoirs ?')){
+      ['icsUrl','icsText','lastSync','homework','notif','demo','hwNotified'].forEach(k=>{try{localStorage.removeItem(k);}catch(e){}});
+      hw=[];events=[];info=null;setStatus('Données effacées');render();
+    }
+  }
+});
+document.addEventListener('submit',e=>{
+  const f=e.target.dataset.form;if(!f)return;
+  e.preventDefault();
+  if(f==='hw'){
+    const fd=new FormData(e.target);
+    hw.push({id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),title:fd.get('title').trim(),subject:fd.get('subject').trim(),due:fd.get('due'),done:false});
+    saveHw();render();
+  }else if(f==='url'){
+    store.set('icsUrl',$('#icsUrl').value.trim());
+    refresh();
+  }
+});
+document.addEventListener('change',async e=>{
+  const t=e.target;
+  if(t.id==='icsFile'&&t.files[0]){
+    try{
+      const text=await t.files[0].text();
+      if(!text.includes('BEGIN:VCALENDAR'))throw new Error("Ce fichier n'est pas un calendrier ICS");
+      loadICS(text);store.set('icsText',text);store.set('demo',false);
+      setStatus('Fichier importé : '+events.length+' événements');
+      $('#diag').innerHTML=diagHtml();
+    }catch(err){setStatus(err.message,true);}
+  }else if(t.id==='notifOn'){
+    const cfg=store.get('notif',{on:false,min:10});
+    if(t.checked){
+      if(typeof Notification==='undefined'){t.checked=false;setStatus('Notifications non supportées ici',true);return;}
+      const perm=await Notification.requestPermission();
+      if(perm!=='granted'){t.checked=false;setStatus('Permission de notification refusée',true);return;}
+    }
+    cfg.on=t.checked;store.set('notif',cfg);
+  }else if(t.id==='notifMin'){
+    const cfg=store.get('notif',{on:false,min:10});cfg.min=+t.value;store.set('notif',cfg);
+  }
+});
+
+// ---------- Notifications (page ouverte uniquement) ----------
+const notified=new Set();
+function checkNotifs(){
+  const cfg=store.get('notif',{on:false,min:10});
+  if(!cfg.on||typeof Notification==='undefined'||Notification.permission!=='granted')return;
+  const now=Date.now();
+  for(const ev of events){
+    if(ev.allDay||ev.status==='CANCELLED')continue;
+    const diff=(ev.start-now)/60000,key=ev.uid+'|'+ev.start.getTime();
+    if(diff>0&&diff<=cfg.min&&!notified.has(key)){
+      notified.add(key);
+      new Notification(ev.title,{body:fmtTime(ev.start)+(ev.location?' · '+ev.location:'')});
+    }
+  }
+  const d=new Date();
+  if(d.getHours()>=18&&store.get('hwNotified','')!==isoDay(d)){
+    const tom=isoDay(addDays(startOfDay(d),1)),due=hw.filter(h=>!h.done&&h.due===tom);
+    if(due.length){store.set('hwNotified',isoDay(d));new Notification('Devoirs pour demain',{body:due.map(h=>h.title).join('\n')});}
+  }
+}
+
+// ---------- Démarrage ----------
+// Nettoyage des anciens réglages du relais (la clé n'est plus utilisée)
+try{localStorage.removeItem('relay');localStorage.removeItem('relayKey');}catch(e){}
+applyTheme(store.get('theme',matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
+const cached=store.get('icsText','');
+if(cached){try{loadICS(cached);}catch(e){console.error(e);}}
+const last=store.get('lastSync',0);
+if(last)setStatus('Dernière synchro : '+new Date(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
+render();
+if(store.get('icsUrl',''))refresh();
+setInterval(refresh,10*60000);
+setInterval(()=>{if(view==='home'||view==='day')render();checkNotifs();},30000);
+document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible'&&Date.now()-store.get('lastSync',0)>5*60000&&store.get('icsUrl',''))refresh();
+});
