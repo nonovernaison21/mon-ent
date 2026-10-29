@@ -164,6 +164,7 @@ const ICON={
   hw:'<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="m8.5 12.2 2.5 2.5 4.5-5"/>',
   set:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
   sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+  out:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/>'
 };
 const svg=(n,s)=>`<svg viewBox="0 0 24 24" width="${s||22}" height="${s||22}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
@@ -189,6 +190,7 @@ let hwFeedEvents=store.get('hwFeedEvents',[]).map(reviveEvent);
 let evalFeedEvents=store.get('evalFeedEvents',[]).map(reviveEvent);
 let hw=store.get('homework',[]);
 let autoDone=store.get('hwAutoDone',{});
+let ctrlDone=store.get('ctrlDone',{});
 let ov=store.get('overrides',{});
 let words=store.get('hwWords',DEFAULT_WORDS.slice());
 let hwShow='todo';
@@ -246,7 +248,7 @@ function hwItems(){
   const man=hw.map(h=>Object.assign({},h,{auto:false}));
   return imported.concat(man);
 }
-function evalItems(){return evalFeedEvents.filter(e=>e.status!=='CANCELLED').map(e=>feedItemFromEvent(e,'eval')).sort(byDue);}
+function evalItems(){return evalFeedEvents.filter(e=>e.status!=='CANCELLED').map(e=>{const x=feedItemFromEvent(e,'eval');x.done=!!ctrlDone[x.id];return x;}).sort(byDue);}
 const byDue=(a,b)=>a.due.localeCompare(b.due);
 function todoItems(){return hwItems().filter(h=>!h.done).sort(byDue);}
 const sched=day=>{const s=startOfDay(day),e=addDays(s,1);return events.filter(ev=>ev.kind==='course'&&ev.start<e&&ev.end>s);};
@@ -256,7 +258,9 @@ function groupItems(items){
   return Object.keys(groups).sort((a,b)=>a.localeCompare(b,'fr')).map(subject=>({subject,items:groups[subject].sort(byDue)}));
 }
 function groupedHomework(items){return groupItems(items).map(g=>`<section class="subject-group"><h3>${esc(g.subject)} <span>${g.items.length}</span></h3>${list(g.items.map(hwRow).join(''),'Aucun élément.')}</section>`).join('');}
-function controlRow(h){const d=dueLabel(h.due);return `<div class="hw control-item"><div class="hb"><div class="ht">${esc(h.title)}</div><div class="m"><span class="${d.c}">${esc(d.t)}</span></div>${h.notes?`<details><summary>Contenu et détails</summary><div class="notes">${esc(h.notes)}</div></details>`:''}</div></div>`;}
+function controlRow(h){const d=dueLabel(h.due);return `<div class="hw control-item${h.done?' done':''}">
+    <input type="checkbox" data-act="ctrltoggle" data-id="${esc(h.id)}" ${h.done?'checked':''} aria-label="Marquer comme fait">
+    <div class="hb"><div class="ht">${esc(h.title)}</div><div class="m"><span class="${d.c}">${esc(d.t)}</span></div>${h.notes?`<details><summary>Contenu et détails</summary><div class="notes">${esc(h.notes)}</div></details>`:''}</div></div>`;}
 function groupedControls(items){return groupItems(items).map(g=>`<section class="subject-group"><h3>${esc(g.subject)} <span>${g.items.length}</span></h3>${list(g.items.map(controlRow).join(''),'Aucun contrôle.')}</section>`).join('');}
 
 function loadICS(text){
@@ -275,6 +279,7 @@ async function fetchCalendarUrl(url){
   return text;
 }
 async function refresh(){
+  if(!session())return;
   const feeds=[
     {key:'icsUrl',cache:'icsText',name:'emploi du temps',apply:text=>{loadICS(text);}},
     {key:'homeworkUrl',cache:'hwICStext',name:'devoirs',apply:text=>{hwFeedEvents=parseICS(text).events.sort((a,b)=>a.start-b.start);store.set('hwFeedEvents',hwFeedEvents);}},
@@ -356,7 +361,7 @@ function viewHome(){
     :`<div class="m">${esc(none)}</div>`}</div>`;
   const todo=todoItems().slice(0,5);
   const horizon=addDays(now,14);
-  const evals=evalItems().filter(e=>parseISO(e.due)>=startOfDay(now)&&parseISO(e.due)<horizon).slice(0,4);
+  const evals=evalItems().filter(e=>!e.done&&parseISO(e.due)>=startOfDay(now)&&parseISO(e.due)<horizon).slice(0,4);
   return `<h1>${esc(cap(fmtDay(now)))}</h1>
   <p class="sub">${esc(resume)}${store.get('demo',false)?' · exemple fictif':''}</p>
   <div class="hero">
@@ -432,7 +437,7 @@ function viewSet(){
   const url=store.get('icsUrl',''),homeworkUrl=store.get('homeworkUrl',''),controlsUrl=store.get('controlsUrl',''),n=store.get('notif',{on:false,min:10});
   const themePref=store.get('themePreference',store.get('theme','system'));
   const account=store.get('lapsusSession',null);
-  const authPanel=account?`<div class="panel"><p>Connecté en tant que <strong>${esc(account.email)}</strong></p><p class="m">Ce compte est enregistré sur cet appareil. Pour retrouver tes données sur plusieurs appareils, il faudra connecter Lapsus à un service de comptes en ligne.</p><button class="btn" type="button" data-act="logout">Se déconnecter</button></div>`:`<div class="panel"><p class="m">Crée un compte local ou reconnecte-toi depuis ce navigateur. Cette version ne synchronise pas encore les comptes entre plusieurs appareils.</p><div class="seg"><button type="button" class="on" data-act="authmode" data-v="register">Créer un compte</button><button type="button" data-act="authmode" data-v="login">Se connecter</button></div><form data-form="auth" id="authForm"><input type="hidden" name="authmode" value="register"><label class="fl" for="authEmail">Adresse e-mail</label><input id="authEmail" name="email" type="email" autocomplete="email" required placeholder="toi@exemple.fr"><label class="fl" for="authPassword">Mot de passe</label><input id="authPassword" name="password" type="password" minlength="8" autocomplete="new-password" required placeholder="8 caractères minimum"><p class="m" id="authHelp">Le compte est conservé dans ce navigateur. N'utilise pas un mot de passe important.</p><button class="btn primary" id="authSubmit">Créer mon compte</button><p class="m" id="authMessage" role="status"></p></form></div>`;
+  const authPanel=`<div class="panel"><p>Connecté en tant que <strong>${esc(account?account.email:'')}</strong></p><p class="m">Ce compte est enregistré sur cet appareil. Pour retrouver tes données sur plusieurs appareils, il faudra connecter Lapsus à un service de comptes en ligne.</p><button class="btn" type="button" data-act="logout">Se déconnecter</button></div>`;
   return `<h1>Réglages</h1>
   <h2>Compte utilisateur</h2>${authPanel}
   <h2>Apparence</h2><div class="panel"><label class="fl" for="themeSelect">Thème</label><select id="themeSelect"><option value="light"${themePref==='light'?' selected':''}>Clair</option><option value="dark"${themePref==='dark'?' selected':''}>Sombre</option><option value="system"${themePref==='system'?' selected':''}>Système (selon ton appareil)</option></select><p class="m">Le mode Système suit automatiquement le thème clair ou sombre de Windows, macOS, iOS ou Android.</p></div>
@@ -541,6 +546,33 @@ async function passwordHash(password,saltHex){
   const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt,iterations:150000,hash:'SHA-256'},material,256);
   return {salt:bytesToHex(salt),hash:bytesToHex(bits)};
 }
+const session=()=>store.get('lapsusSession',null);
+function gateHTML(mode){
+  const reg=mode!=='login';
+  return `<div class="gate-card">
+    <div class="gate-brand"><img src="logo.svg" alt="" width="32" height="32"><span>Lapsus</span></div>
+    <p class="sub">${reg?'Crée ton compte pour commencer.':'Content de te revoir.'}</p>
+    <div class="seg"><button type="button" class="${reg?'on':''}" data-act="authmode" data-v="register">Créer un compte</button><button type="button" class="${reg?'':'on'}" data-act="authmode" data-v="login">Se connecter</button></div>
+    <form data-form="auth" id="authForm">
+      <input type="hidden" name="authmode" value="${reg?'register':'login'}">
+      <label class="fl" for="authEmail">Adresse e-mail</label>
+      <input id="authEmail" name="email" type="email" autocomplete="email" required placeholder="toi@exemple.fr">
+      <label class="fl" for="authPassword">Mot de passe</label>
+      <input id="authPassword" name="password" type="password" minlength="8" autocomplete="${reg?'new-password':'current-password'}" required placeholder="8 caractères minimum">
+      <p class="m" id="authHelp">${reg?'Le compte est conservé dans ce navigateur. N’utilise pas un mot de passe important.':'Saisis l’adresse e-mail et le mot de passe utilisés sur cet appareil.'}</p>
+      <button class="btn primary" id="authSubmit">${reg?'Créer mon compte':'Se connecter'}</button>
+      <p class="m" id="authMessage" role="status"></p>
+    </form>
+  </div>`;
+}
+// Affiche l'écran de connexion tant que personne n'est connecté (la session reste mémorisée ensuite).
+function applyAuth(){
+  const locked=!session(),g=$('#gate');
+  document.body.classList.toggle('locked',locked);
+  if(!g)return;
+  if(locked){g.hidden=false;g.innerHTML=gateHTML(Object.keys(store.get(ACCOUNT_KEY,{})).length?'login':'register');}
+  else{g.hidden=true;g.innerHTML='';}
+}
 function setAuthMode(mode){
   const form=$('#authForm');if(!form)return;
   const register=mode!=='login';
@@ -550,6 +582,7 @@ function setAuthMode(mode){
   pass.autocomplete=register?'new-password':'current-password';
   help.textContent=register?'Le compte est conservé dans ce navigateur. N’utilise pas un mot de passe important.':'Saisis l’adresse e-mail et le mot de passe utilisés sur cet appareil.';
   form.querySelectorAll('[data-act="authmode"]').forEach(b=>b.classList.toggle('on',b.dataset.v===(register?'register':'login')));
+  const sub=document.querySelector('#gate .sub');if(sub)sub.textContent=register?'Crée ton compte pour commencer.':'Content de te revoir.';
   $('#authMessage').textContent='';
 }
 document.addEventListener('click',e=>{
@@ -568,7 +601,7 @@ document.addEventListener('click',e=>{
   else if(a==='gotoday'){cursor=parseISO(t.dataset.d);mode='day';view='agenda';store.set('mode',mode);store.set('view',view);render();}
   else if(a==='theme'){const p=store.get('themePreference',store.get('theme','system'));applyTheme(p==='system'?'light':p==='light'?'dark':'system');}
   else if(a==='authmode'){setAuthMode(t.dataset.v);}
-  else if(a==='logout'){store.set('lapsusSession',null);setStatus('Déconnecté');render();}
+  else if(a==='logout'){store.set('lapsusSession',null);setStatus('');applyAuth();window.scrollTo(0,0);}
   else if(a==='sync'){refresh();}
   else if(a==='demo'){loadDemo();}
   else if(a==='hwshow'){hwShow=t.dataset.v;render();}
@@ -580,12 +613,16 @@ document.addEventListener('click',e=>{
       render();
     }
   }
+  else if(a==='ctrltoggle'){
+    if(ctrlDone[id])delete ctrlDone[id];else ctrlDone[id]=true;
+    store.set('ctrlDone',ctrlDone);render();
+  }
   else if(a==='hwdel'){hw=hw.filter(x=>x.id!==id);saveHw();render();}
   else if(a==='wordsreset'){words=DEFAULT_WORDS.slice();store.set('hwWords',words);classify();setStatus('Mots par défaut remis');render();}
   else if(a==='wipe'){
     if(t.dataset.sure==='1'){
-      ['icsUrl','icsText','homeworkUrl','controlsUrl','hwICStext','evalICStext','hwFeedEvents','evalFeedEvents','lastSync','homework','notif','demo','hwNotified','hwAutoDone','overrides','hwWords','lapsusSession','lapsusLocalAccounts','themePreference'].forEach(k=>{try{localStorage.removeItem(k);}catch(x){}});
-      hw=[];events=[];hwFeedEvents=[];evalFeedEvents=[];autoDone={};ov={};words=DEFAULT_WORDS.slice();setStatus('Données effacées');render();
+      ['icsUrl','icsText','homeworkUrl','controlsUrl','hwICStext','evalICStext','hwFeedEvents','evalFeedEvents','lastSync','homework','notif','demo','hwNotified','hwAutoDone','ctrlDone','overrides','hwWords','lapsusSession','lapsusLocalAccounts','themePreference'].forEach(k=>{try{localStorage.removeItem(k);}catch(x){}});
+      hw=[];events=[];hwFeedEvents=[];evalFeedEvents=[];autoDone={};ctrlDone={};ov={};words=DEFAULT_WORDS.slice();setStatus('');applyAuth();render();
     }else{
       t.dataset.sure='1';t.textContent='Confirmer : tout effacer';
       setTimeout(()=>{if(t.isConnected){t.dataset.sure='';t.textContent='Tout effacer';}},4000);
@@ -620,7 +657,8 @@ document.addEventListener('submit',async e=>{
         if(!accounts[email]||accounts[email].hash!==result.hash)throw new Error('Adresse e-mail ou mot de passe incorrect.');
       }
       store.set('lapsusSession',{email,connectedAt:Date.now()});
-      setStatus(mode==='register'?'Compte local créé':'Connexion réussie');render();
+      applyAuth();setStatus(mode==='register'?'Compte créé':'Connecté');render();window.scrollTo(0,0);
+      if(store.get('icsUrl','')||store.get('homeworkUrl','')||store.get('controlsUrl',''))refresh();
     }catch(err){if(msg)msg.textContent=err.message;}
   }else if(f==='words'){
     words=$('#hwWords').value.split(',').map(s=>s.trim()).filter(Boolean);
@@ -655,6 +693,7 @@ document.addEventListener('change',async e=>{
 // ---------- Notifications (page ouverte uniquement) ----------
 const notified=new Set();
 function checkNotifs(){
+  if(!session())return;
   const cfg=store.get('notif',{on:false,min:10});
   if(!cfg.on||typeof Notification==='undefined'||Notification.permission!=='granted')return;
   const now=Date.now();
@@ -677,6 +716,8 @@ function checkNotifs(){
 // Nettoyage des anciens réglages du relais (la clé n'est plus utilisée)
 try{localStorage.removeItem('relay');localStorage.removeItem('relayKey');}catch(e){}
 applyTheme(store.get('themePreference',store.get('theme','system')));
+{const lb=$('#logoutBtn');if(lb)lb.innerHTML=svg('out',20);}
+applyAuth();
 try{matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(store.get('themePreference',store.get('theme','system'))==='system')applyTheme('system');});}catch(e){}
 const cached=store.get('icsText','');
 if(cached){try{loadICS(cached);}catch(e){console.error(e);}}
