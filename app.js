@@ -103,6 +103,7 @@ function buildEvents(c){
     title:unescapeText(val('SUMMARY')||'(sans titre)'),
     location:unescapeText(val('LOCATION')),
     description:unescapeText(val('DESCRIPTION')),
+    categories:unescapeText(val('CATEGORIES')),
     status:val('STATUS').toUpperCase(),
     allDay:s.allDay,start:s.date,end,
     props:Object.keys(p),raw:c.raw.join('\n')
@@ -167,6 +168,9 @@ const ICON={
 };
 const svg=(n,s)=>`<svg viewBox="0 0 24 24" width="${s||22}" height="${s||22}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
 
+// Reconstitue les dates enregistrées en cache local.
+function reviveEvent(e){return Object.assign({},e,{start:new Date(e.start),end:new Date(e.end)});}
+
 // ---------- État ----------
 const VIEWS=[['home','Accueil','home'],['agenda','Agenda','cal'],['hw','Devoirs','hw'],['set','Réglages','set']];
 // Mots qui, dans le titre ou la description d'un événement, indiquent un devoir (modifiable dans les réglages)
@@ -181,6 +185,8 @@ if(!VIEWS.some(v=>v[0]===view))view='home';
 if(!['day','week','month'].includes(mode))mode='week';
 let cursor=startOfDay(new Date());
 let events=[];
+let hwFeedEvents=store.get('hwFeedEvents',[]).map(reviveEvent);
+let evalFeedEvents=store.get('evalFeedEvents',[]).map(reviveEvent);
 let hw=store.get('homework',[]);
 let autoDone=store.get('hwAutoDone',{});
 let ov=store.get('overrides',{});
@@ -200,10 +206,10 @@ function classify(){
     e.key=(e.uid||e.title)+'|'+e.start.getTime();
     const o=ov[e.key];
     if(o){e.kind=o;continue;}
-    if(e.allDay){e.kind='course';continue;}
     const t=norm(e.title);
-    if(EVAL_RE.test(t)){e.kind='eval';continue;}
-    e.kind=(hwRx&&hwRx.test(t+' '+norm(e.description)))?'hw':'course';
+    if(EVAL_RE.test(t+' '+norm(e.description))){e.kind='eval';continue;}
+    if(hwRx&&hwRx.test(t+' '+norm(e.description))){e.kind='hw';continue;}
+    e.kind='course';
   }
 }
 function stripLabel(t){
@@ -221,18 +227,37 @@ function hwFromEvent(e){
   title=stripLabel(title).trim()||e.title;
   return {title:cap(title),subject,due:isoDay(e.start),notes:e.description||''};
 }
+function feedItemFromEvent(e,type){
+  let title=(e.title||'').trim(),subject=(e.categories||'').split(',')[0].trim();
+  const m=title.match(/^(.{2,45}?)\s*[:：]\s*(.+)$/);
+  if(m){
+    const prefix=m[1].trim();
+    if(!subject&&!/(devoir|travail|controle|contrôle|évaluation|evaluation|interro|ds|dst)/i.test(prefix))subject=prefix;
+    title=m[2].trim();
+  }
+  if(!subject){
+    const dash=title.match(/^(.{2,45}?)\s+[–—-]\s+(.+)$/);
+    if(dash&&!/(devoir|travail|controle|contrôle|évaluation|evaluation|interro|ds|dst)/i.test(dash[1])){subject=dash[1].trim();title=dash[2].trim();}
+  }
+  return {id:(e.uid||e.title)+'|'+e.start.getTime(),title:cap(title||e.title||'(sans titre)'),subject:subject||'Matière non précisée',due:isoDay(e.start),notes:e.description||'',allDay:e.allDay,start:e.start,end:e.end,type};
+}
 function hwItems(){
-  const auto=events.filter(e=>e.kind==='hw'&&e.status!=='CANCELLED').map(e=>Object.assign({id:e.key,auto:true,done:!!autoDone[e.key]},hwFromEvent(e)));
+  const imported=hwFeedEvents.filter(e=>e.status!=='CANCELLED').map(e=>{const x=feedItemFromEvent(e,'hw');return Object.assign({auto:true,done:!!autoDone[x.id]},x);});
   const man=hw.map(h=>Object.assign({},h,{auto:false}));
-  return auto.concat(man);
+  return imported.concat(man);
 }
+function evalItems(){return evalFeedEvents.filter(e=>e.status!=='CANCELLED').map(e=>feedItemFromEvent(e,'eval')).sort(byDue);}
 const byDue=(a,b)=>a.due.localeCompare(b.due);
-// Un devoir importé du calendrier est masqué de la liste "à faire" s'il date de plus de 7 jours
-function todoItems(){
-  const t0=startOfDay(new Date()).getTime()-7*86400000;
-  return hwItems().filter(h=>!h.done&&(!h.auto||parseISO(h.due).getTime()>=t0)).sort(byDue);
+function todoItems(){return hwItems().filter(h=>!h.done).sort(byDue);}
+const sched=day=>{const s=startOfDay(day),e=addDays(s,1);return events.filter(ev=>ev.kind==='course'&&ev.start<e&&ev.end>s);};
+function groupItems(items){
+  const groups={};
+  for(const item of items){const subject=(item.subject||'Matière non précisée').trim()||'Matière non précisée';(groups[subject]||(groups[subject]=[])).push(item);}
+  return Object.keys(groups).sort((a,b)=>a.localeCompare(b,'fr')).map(subject=>({subject,items:groups[subject].sort(byDue)}));
 }
-const sched=day=>{const s=startOfDay(day),e=addDays(s,1);return events.filter(ev=>ev.kind!=='hw'&&ev.start<e&&ev.end>s);};
+function groupedHomework(items){return groupItems(items).map(g=>`<section class="subject-group"><h3>${esc(g.subject)} <span>${g.items.length}</span></h3>${list(g.items.map(hwRow).join(''),'Aucun élément.')}</section>`).join('');}
+function controlRow(h){const d=dueLabel(h.due);return `<div class="hw control-item"><div class="hb"><div class="ht">${esc(h.title)}</div><div class="m"><span class="${d.c}">${esc(d.t)}</span></div>${h.notes?`<details><summary>Contenu et détails</summary><div class="notes">${esc(h.notes)}</div></details>`:''}</div></div>`;}
+function groupedControls(items){return groupItems(items).map(g=>`<section class="subject-group"><h3>${esc(g.subject)} <span>${g.items.length}</span></h3>${list(g.items.map(controlRow).join(''),'Aucun contrôle.')}</section>`).join('');}
 
 function loadICS(text){
   const r=parseICS(text);
@@ -242,28 +267,37 @@ function loadICS(text){
 
 // ---------- Synchronisation ----------
 function setStatus(t,err){const s=$('#status');s.textContent=t;s.className='status'+(err?' err':'');}
+async function fetchCalendarUrl(url){
+  const r=await fetch(CONFIG.RELAY_URL+'?url='+encodeURIComponent(url),{cache:'no-store'});
+  if(!r.ok){let m='Erreur '+r.status;try{const j=await r.json();if(j.error)m=j.error;}catch(e){}throw new Error(m);}
+  const text=await r.text();
+  if(!text.includes('BEGIN:VCALENDAR'))throw new Error('Ce lien ne renvoie pas un calendrier ICS');
+  return text;
+}
 async function refresh(){
-  const url=store.get('icsUrl','');
-  if(!url){setStatus('Aucun lien ICS');return;}
-  try{
-    setStatus('Actualisation...');
-    const r=await fetch(CONFIG.RELAY_URL+'?url='+encodeURIComponent(url),{cache:'no-store'});
-    if(!r.ok){
-      let m='Erreur '+r.status;
-      try{const j=await r.json();if(j.error)m=j.error;}catch(e){}
-      throw new Error(m);
+  const feeds=[
+    {key:'icsUrl',cache:'icsText',name:'emploi du temps',apply:text=>{loadICS(text);}},
+    {key:'homeworkUrl',cache:'hwICStext',name:'devoirs',apply:text=>{hwFeedEvents=parseICS(text).events.sort((a,b)=>a.start-b.start);store.set('hwFeedEvents',hwFeedEvents);}},
+    {key:'controlsUrl',cache:'evalICStext',name:'contrôles',apply:text=>{evalFeedEvents=parseICS(text).events.sort((a,b)=>a.start-b.start);store.set('evalFeedEvents',evalFeedEvents);}}
+  ];
+  const configured=feeds.filter(f=>store.get(f.key,''));
+  if(!configured.length){setStatus('Ajoute un lien ICS dans les réglages');return;}
+  setStatus('Actualisation...');
+  const results=await Promise.all(configured.map(async f=>{
+    try{
+      const text=await fetchCalendarUrl(store.get(f.key,''));
+      f.apply(text);store.set(f.cache,text);
+      if(f.key==='icsUrl'){store.set('demo',false);store.set('lastSync',Date.now());}
+      return {name:f.name,ok:true};
+    }catch(err){
+      const cached=store.get(f.cache,'');
+      if(cached){try{f.apply(cached);}catch(e){}}
+      return {name:f.name,ok:false,error:err.message};
     }
-    const text=await r.text();
-    if(!text.includes('BEGIN:VCALENDAR'))throw new Error("Ce lien ne renvoie pas un calendrier ICS");
-    loadICS(text);
-    store.set('icsText',text);
-    store.set('demo',false);
-    store.set('lastSync',Date.now());
-    setStatus('Synchronisé à '+fmtTime(new Date()));
-  }catch(e){
-    const msg=e instanceof TypeError?'connexion impossible, vérifie ton réseau et réessaie':e.message;
-    setStatus('Échec : '+msg+(events.length?' (données en cache)':''),true);
-  }
+  }));
+  const failed=results.filter(r=>!r.ok);
+  if(failed.length)setStatus('Erreur '+failed.map(r=>r.name+': '+r.error).join(' · '),true);
+  else{store.set('lastSync',Date.now());setStatus('Synchronisé à '+fmtTime(new Date()));}
   if(!typing())render();
 }
 
@@ -279,7 +313,7 @@ function evRow(ev,showDate){
     <div class="bd">
       <div class="t">${esc(ev.title)}${ev.kind==='eval'?'<span class="badge warn">Évaluation</span>':''}${cancelled?'<span class="badge bad">Annulé</span>':''}${live?'<span class="badge ok">En cours</span>':''}</div>
       ${sub?`<div class="m">${sub}</div>`:''}
-      <details><summary>Détails</summary>${ev.description?`<div class="notes">${esc(ev.description)}</div>`:''}<button class="lnk" data-act="tohw" data-id="${esc(ev.key)}">C'est un devoir</button></details>
+      <details><summary>Détails</summary>${ev.description?`<div class="notes">${esc(ev.description)}</div>`:''}</details>
     </div>
   </div>`;
 }
@@ -292,9 +326,7 @@ function dueLabel(iso){
 }
 function hwRow(h){
   const d=dueLabel(h.due);
-  const act=h.auto
-    ?`<button class="lnk" data-act="unhw" data-id="${esc(h.id)}">Pas un devoir</button>`
-    :`<button class="lnk" data-act="hwdel" data-id="${esc(h.id)}">Supprimer</button>`;
+  const act=h.auto?'':`<button class="lnk" data-act="hwdel" data-id="${esc(h.id)}">Supprimer</button>`;
   return `<div class="hw${h.done?' done':''}">
     <input type="checkbox" data-act="hwtoggle" data-id="${esc(h.id)}" ${h.done?'checked':''} aria-label="Marquer comme fait">
     <div class="hb"><div class="ht">${esc(h.title)}</div>
@@ -312,7 +344,7 @@ function viewHome(){
     <p class="sub">Aucun calendrier chargé pour l'instant.</p>
     <div class="row"><button class="btn primary" data-act="view" data-v="set">Ajouter mon lien ICS</button><button class="btn" data-act="demo">Voir un exemple</button></div>`;
   const now=new Date();
-  const act=events.filter(e=>e.kind!=='hw'&&!e.allDay&&e.status!=='CANCELLED');
+  const act=events.filter(e=>e.kind==='course'&&!e.allDay&&e.status!=='CANCELLED');
   const cur=act.find(e=>e.start<=now&&e.end>now);
   const nxt=act.find(e=>e.start>now);
   const today=sched(now);
@@ -324,7 +356,7 @@ function viewHome(){
     :`<div class="m">${esc(none)}</div>`}</div>`;
   const todo=todoItems().slice(0,5);
   const horizon=addDays(now,14);
-  const evals=events.filter(e=>e.kind==='eval'&&e.status!=='CANCELLED'&&e.end>now&&e.start<horizon).slice(0,4);
+  const evals=evalItems().filter(e=>parseISO(e.due)>=startOfDay(now)&&parseISO(e.due)<horizon).slice(0,4);
   return `<h1>${esc(cap(fmtDay(now)))}</h1>
   <p class="sub">${esc(resume)}${store.get('demo',false)?' · exemple fictif':''}</p>
   <div class="hero">
@@ -333,15 +365,15 @@ function viewHome(){
   </div>
   <h2>Aujourd'hui</h2>${list(today.map(e=>evRow(e)).join(''),'Rien de prévu.')}
   <h2>Devoirs à faire</h2>${list(todo.map(hwRow).join(''),'Aucun devoir en attente.')}
-  ${evals.length?`<h2>Évaluations à venir</h2><div class="list">${evals.map(e=>evRow(e,true)).join('')}</div>`:''}`;
+  ${evals.length?`<h2>Contrôles à venir</h2>${groupedControls(evals)}`:''}`;
 }
 function viewAgenda(){
   const f=d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
   let title,body;
   if(mode==='day'){
     title=cap(fmtDay(cursor));
-    const l=sched(cursor),due=todoItems().filter(h=>h.due===isoDay(cursor));
-    body=list(l.map(e=>evRow(e)).join(''),'Pas de cours ce jour.')+(due.length?`<h2>Devoirs pour ce jour</h2><div class="list">${due.map(hwRow).join('')}</div>`:'');
+    const l=sched(cursor);
+    body=list(l.map(e=>evRow(e)).join(''),'Pas de cours ce jour.');
   }else if(mode==='week'){
     const mon=mondayOf(cursor);
     title=`${f(mon)} – ${f(addDays(mon,6))}`;
@@ -357,14 +389,13 @@ function viewAgenda(){
     title=cap(cursor.toLocaleDateString('fr-FR',{month:'long',year:'numeric'}));
     let d=mondayOf(new Date(y,m,1));
     let cells=['Lun','Mar','Mer','Jeu','Ven','Sam','Dim'].map(x=>`<div class="dow">${x}</div>`).join('');
-    const dueDays=new Set(todoItems().map(h=>h.due));
     while(d<=last){
       for(let i=0;i<7;i++){
         const l=sched(d).filter(e=>e.status!=='CANCELLED');
         const hues=[...new Set(l.map(e=>hue(e.title)))].slice(0,6);
         cells+=`<button class="cell${d.getMonth()!==m?' out':''}${sameDay(d,new Date())?' today':''}" data-act="gotoday" data-d="${isoDay(d)}" aria-label="${esc(fmtDay(d))}">
           <span class="dn">${d.getDate()}</span>
-          <span class="dots">${hues.map(h=>`<i class="dot" style="--h:${h}"></i>`).join('')}${dueDays.has(isoDay(d))?'<i class="hwdot"></i>':''}</span>
+          <span class="dots">${hues.map(h=>`<i class="dot" style="--h:${h}"></i>`).join('')}</span>
         </button>`;
         d=addDays(d,1);
       }
@@ -381,46 +412,58 @@ function viewHw(){
   const all=hwItems();
   const todo=todoItems(),done=all.filter(h=>h.done).sort((a,b)=>byDue(b,a));
   const items=hwShow==='todo'?todo:done;
-  const subjects=[...new Set(events.filter(e=>e.kind!=='hw').map(e=>e.title))].sort();
-  return `<h1>Devoirs</h1>
+  const subjects=[...new Set(events.filter(e=>e.kind==='course').map(e=>e.title))].sort();
+  const controls=evalItems().filter(e=>parseISO(e.due)>=startOfDay(new Date()));
+  return `<h1>Devoirs et contrôles</h1>
   <form class="add" data-form="hw">
     <div class="row"><input name="title" placeholder="Nouveau devoir" required aria-label="Devoir">
     <input name="subject" list="subs" placeholder="Matière" aria-label="Matière"><datalist id="subs">${subjects.map(s=>`<option value="${esc(s)}">`).join('')}</datalist>
     <input name="due" type="date" required value="${isoDay(addDays(startOfDay(new Date()),1))}" aria-label="Pour le">
     <button class="btn primary">Ajouter</button></div>
   </form>
+  <h2>Devoirs par matière</h2>
   <div class="tools"><div class="seg"><button class="${hwShow==='todo'?'on':''}" data-act="hwshow" data-v="todo">À faire · ${todo.length}</button><button class="${hwShow==='done'?'on':''}" data-act="hwshow" data-v="done">Faits · ${done.length}</button></div></div>
-  ${list(items.map(hwRow).join(''),hwShow==='todo'?'Aucun devoir en attente.':'Rien de fait pour le moment.')}
-  <p class="foot">Les devoirs trouvés dans ton calendrier s'ajoutent ici tout seuls. Si un devoir reste dans l'agenda, ouvre ses détails et choisis « C'est un devoir ».</p>`;
+  ${groupedHomework(items)||`<p class="empty">${hwShow==='todo'?'Aucun devoir en attente.':'Rien de fait pour le moment.'}</p>`}
+  <h2>Contrôles et évaluations par matière</h2>
+  ${controls.length?groupedControls(controls):`<p class="empty">Aucun contrôle à venir. Ajoute le lien ICS des contrôles dans les réglages.</p>`}
+  <p class="foot">Les devoirs et les contrôles viennent de leurs liens ICS respectifs. Ils n’apparaissent plus dans l’agenda des cours.</p>`;
 }
 function viewSet(){
-  const url=store.get('icsUrl',''),n=store.get('notif',{on:false,min:10});
+  const url=store.get('icsUrl',''),homeworkUrl=store.get('homeworkUrl',''),controlsUrl=store.get('controlsUrl',''),n=store.get('notif',{on:false,min:10});
+  const themePref=store.get('themePreference',store.get('theme','system'));
+  const account=store.get('lapsusSession',null);
+  const authPanel=account?`<div class="panel"><p>Connecté en tant que <strong>${esc(account.email)}</strong></p><p class="m">Ce compte est enregistré sur cet appareil. Pour retrouver tes données sur plusieurs appareils, il faudra connecter Lapsus à un service de comptes en ligne.</p><button class="btn" type="button" data-act="logout">Se déconnecter</button></div>`:`<div class="panel"><p class="m">Crée un compte local ou reconnecte-toi depuis ce navigateur. Cette version ne synchronise pas encore les comptes entre plusieurs appareils.</p><div class="seg"><button type="button" class="on" data-act="authmode" data-v="register">Créer un compte</button><button type="button" data-act="authmode" data-v="login">Se connecter</button></div><form data-form="auth" id="authForm"><input type="hidden" name="authmode" value="register"><label class="fl" for="authEmail">Adresse e-mail</label><input id="authEmail" name="email" type="email" autocomplete="email" required placeholder="toi@exemple.fr"><label class="fl" for="authPassword">Mot de passe</label><input id="authPassword" name="password" type="password" minlength="8" autocomplete="new-password" required placeholder="8 caractères minimum"><p class="m" id="authHelp">Le compte est conservé dans ce navigateur. N'utilise pas un mot de passe important.</p><button class="btn primary" id="authSubmit">Créer mon compte</button><p class="m" id="authMessage" role="status"></p></form></div>`;
   return `<h1>Réglages</h1>
-  <h2>Calendrier</h2>
+  <h2>Compte utilisateur</h2>${authPanel}
+  <h2>Apparence</h2><div class="panel"><label class="fl" for="themeSelect">Thème</label><select id="themeSelect"><option value="light"${themePref==='light'?' selected':''}>Clair</option><option value="dark"${themePref==='dark'?' selected':''}>Sombre</option><option value="system"${themePref==='system'?' selected':''}>Système (selon ton appareil)</option></select><p class="m">Le mode Système suit automatiquement le thème clair ou sombre de Windows, macOS, iOS ou Android.</p></div>
+  <h2>Emploi du temps</h2>
   <form class="panel" data-form="url">
-    <label class="fl" for="icsUrl">Lien ICS</label>
-    <div class="row"><input id="icsUrl" type="url" placeholder="https://... ou webcal://..." value="${esc(url)}" autocomplete="off" required><button class="btn primary">Synchroniser</button></div>
-    <p class="m">Le lien reste dans ce navigateur et n'est envoyé qu'au service de synchronisation du site. Traite-le comme un mot de passe.</p>
+    <label class="fl" for="icsUrl">Lien ICS de l’emploi du temps</label>
+    <div class="row"><input id="icsUrl" type="url" placeholder="https://... ou webcal://..." value="${esc(url)}" autocomplete="off"><button class="btn primary">Enregistrer et synchroniser</button></div>
+    <p class="m">Ce lien sert uniquement aux cours et aux horaires de l’agenda.</p>
     <div class="row"><button type="button" class="btn" data-act="sync">Actualiser maintenant</button>
     <label class="btn" for="icsFile">Importer un fichier .ics</label><input id="icsFile" type="file" accept=".ics,text/calendar" hidden>
     <button type="button" class="btn" data-act="demo">Voir un exemple</button></div>
   </form>
-  <h2>Devoirs</h2>
-  <form class="panel" data-form="words">
-    <label class="fl" for="hwWords">Mots qui repèrent un devoir dans ton calendrier</label>
-    <div class="row"><input id="hwWords" value="${esc(words.join(', '))}" autocomplete="off"><button class="btn primary">Enregistrer</button></div>
-    <p class="m">Sépare les mots par des virgules. Un événement dont le titre ou la description contient l'un d'eux va dans les devoirs. Les évaluations (DS, contrôle, interro) restent dans l'agenda.</p>
-    <button type="button" class="lnk" data-act="wordsreset">Remettre les mots par défaut</button>
+  <h2>Source des devoirs</h2>
+  <form class="panel" data-form="feeds">
+    <label class="fl" for="homeworkUrl">Lien ICS des devoirs</label>
+    <div class="row"><input id="homeworkUrl" type="url" placeholder="Lien du calendrier des devoirs" value="${esc(homeworkUrl)}" autocomplete="off"></div>
+    <p class="m">Les devoirs seront affichés dans l’onglet Devoirs, regroupés par matière avec leur contenu.</p>
+    <label class="fl" for="controlsUrl">Lien ICS des contrôles et évaluations</label>
+    <div class="row"><input id="controlsUrl" type="url" placeholder="Lien du calendrier des contrôles" value="${esc(controlsUrl)}" autocomplete="off"></div>
+    <p class="m">Les contrôles seront regroupés par matière dans Devoirs. Ils ne seront pas affichés dans l’agenda des cours.</p>
+    <button class="btn primary">Enregistrer les liens et synchroniser</button>
   </form>
   <h2>Notifications</h2>
   <div class="panel">
     <div class="row"><label class="chk"><input type="checkbox" id="notifOn" ${n.on?'checked':''}> Rappel avant chaque cours</label>
     <select id="notifMin" aria-label="Délai du rappel">${[5,10,15,30].map(x=>`<option value="${x}"${x===n.min?' selected':''}>${x} min avant</option>`).join('')}</select></div>
-    <p class="m">Fonctionne seulement tant que cette page reste ouverte. Un rappel des devoirs du lendemain part aussi après 18 h.</p>
+    <p class="m">Fonctionne tant que cette page reste ouverte. Un rappel des devoirs du lendemain part aussi après 18 h.</p>
   </div>
   <h2>Données</h2>
   <div class="panel"><button class="btn danger" data-act="wipe">Tout effacer</button>
-    <p class="m">Supprime le lien, le calendrier en cache, les devoirs et les réglages de ce navigateur.</p></div>`;
+    <p class="m">Supprime les liens, les calendriers en cache, les devoirs et les réglages de ce navigateur.</p></div>`;
 }
 
 function render(){
@@ -475,9 +518,39 @@ function loadDemo(){
 }
 
 // ---------- Actions ----------
-function applyTheme(t){
-  document.documentElement.dataset.theme=t;store.set('theme',t);
-  const b=$('#themeBtn');if(b)b.innerHTML=svg(t==='dark'?'sun':'moon',20);
+function resolvedTheme(pref){
+  if(pref==='system')return matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+  return pref==='dark'?'dark':'light';
+}
+function applyTheme(pref){
+  if(!['light','dark','system'].includes(pref))pref='system';
+  store.set('themePreference',pref);
+  const actual=resolvedTheme(pref);
+  document.documentElement.dataset.theme=actual;
+  // Compatibilité avec les anciennes versions.
+  store.set('theme',pref);
+  const b=$('#themeBtn');if(b){b.innerHTML=svg(actual==='dark'?'sun':'moon',20);b.setAttribute('aria-label','Thème actuel : '+(pref==='system'?'système':pref==='dark'?'sombre':'clair')+'. Cliquer pour changer.');}
+  const select=$('#themeSelect');if(select&&select.value!==pref)select.value=pref;
+}
+const ACCOUNT_KEY='lapsusLocalAccounts';
+async function passwordHash(password,saltHex){
+  if(!globalThis.crypto||!crypto.subtle)throw new Error('Le chiffrement du navigateur est indisponible. Ouvre Lapsus depuis une adresse HTTPS.');
+  const bytesToHex=b=>Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,'0')).join('');
+  const salt=saltHex?Uint8Array.from(saltHex.match(/.{2}/g).map(x=>parseInt(x,16))):crypto.getRandomValues(new Uint8Array(16));
+  const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(password),'PBKDF2',false,['deriveBits']);
+  const bits=await crypto.subtle.deriveBits({name:'PBKDF2',salt,iterations:150000,hash:'SHA-256'},material,256);
+  return {salt:bytesToHex(salt),hash:bytesToHex(bits)};
+}
+function setAuthMode(mode){
+  const form=$('#authForm');if(!form)return;
+  const register=mode!=='login';
+  form.elements.authmode.value=register?'register':'login';
+  const submit=$('#authSubmit'),pass=$('#authPassword'),help=$('#authHelp');
+  submit.textContent=register?'Créer mon compte':'Se connecter';
+  pass.autocomplete=register?'new-password':'current-password';
+  help.textContent=register?'Le compte est conservé dans ce navigateur. N’utilise pas un mot de passe important.':'Saisis l’adresse e-mail et le mot de passe utilisés sur cet appareil.';
+  form.querySelectorAll('[data-act="authmode"]').forEach(b=>b.classList.toggle('on',b.dataset.v===(register?'register':'login')));
+  $('#authMessage').textContent='';
 }
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-act]');if(!t)return;
@@ -493,7 +566,9 @@ document.addEventListener('click',e=>{
   }
   else if(a==='today'){cursor=startOfDay(new Date());render();}
   else if(a==='gotoday'){cursor=parseISO(t.dataset.d);mode='day';view='agenda';store.set('mode',mode);store.set('view',view);render();}
-  else if(a==='theme'){applyTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');}
+  else if(a==='theme'){const p=store.get('themePreference',store.get('theme','system'));applyTheme(p==='system'?'light':p==='light'?'dark':'system');}
+  else if(a==='authmode'){setAuthMode(t.dataset.v);}
+  else if(a==='logout'){store.set('lapsusSession',null);setStatus('Déconnecté');render();}
   else if(a==='sync'){refresh();}
   else if(a==='demo'){loadDemo();}
   else if(a==='hwshow'){hwShow=t.dataset.v;render();}
@@ -506,20 +581,18 @@ document.addEventListener('click',e=>{
     }
   }
   else if(a==='hwdel'){hw=hw.filter(x=>x.id!==id);saveHw();render();}
-  else if(a==='tohw'){ov[id]='hw';store.set('overrides',ov);classify();render();}
-  else if(a==='unhw'){ov[id]='course';store.set('overrides',ov);classify();render();}
   else if(a==='wordsreset'){words=DEFAULT_WORDS.slice();store.set('hwWords',words);classify();setStatus('Mots par défaut remis');render();}
   else if(a==='wipe'){
     if(t.dataset.sure==='1'){
-      ['icsUrl','icsText','lastSync','homework','notif','demo','hwNotified','hwAutoDone','overrides','hwWords'].forEach(k=>{try{localStorage.removeItem(k);}catch(x){}});
-      hw=[];events=[];autoDone={};ov={};words=DEFAULT_WORDS.slice();setStatus('Données effacées');render();
+      ['icsUrl','icsText','homeworkUrl','controlsUrl','hwICStext','evalICStext','hwFeedEvents','evalFeedEvents','lastSync','homework','notif','demo','hwNotified','hwAutoDone','overrides','hwWords','lapsusSession','lapsusLocalAccounts','themePreference'].forEach(k=>{try{localStorage.removeItem(k);}catch(x){}});
+      hw=[];events=[];hwFeedEvents=[];evalFeedEvents=[];autoDone={};ov={};words=DEFAULT_WORDS.slice();setStatus('Données effacées');render();
     }else{
       t.dataset.sure='1';t.textContent='Confirmer : tout effacer';
       setTimeout(()=>{if(t.isConnected){t.dataset.sure='';t.textContent='Tout effacer';}},4000);
     }
   }
 });
-document.addEventListener('submit',e=>{
+document.addEventListener('submit',async e=>{
   const f=e.target.dataset.form;if(!f)return;
   e.preventDefault();
   if(f==='hw'){
@@ -529,6 +602,26 @@ document.addEventListener('submit',e=>{
   }else if(f==='url'){
     store.set('icsUrl',$('#icsUrl').value.trim());
     refresh();
+  }else if(f==='feeds'){
+    store.set('homeworkUrl',$('#homeworkUrl').value.trim());
+    store.set('controlsUrl',$('#controlsUrl').value.trim());
+    refresh();
+  }else if(f==='auth'){
+    const fd=new FormData(e.target),email=String(fd.get('email')||'').trim().toLowerCase(),password=String(fd.get('password')||''),mode=String(fd.get('authmode')||'register');
+    const msg=$('#authMessage');
+    try{
+      if(password.length<8)throw new Error('Le mot de passe doit contenir au moins 8 caractères.');
+      const accounts=store.get(ACCOUNT_KEY,{});
+      const result=await passwordHash(password,mode==='login'&&accounts[email]?accounts[email].salt:null);
+      if(mode==='register'){
+        if(accounts[email])throw new Error('Un compte existe déjà avec cette adresse sur cet appareil.');
+        accounts[email]={salt:result.salt,hash:result.hash,createdAt:Date.now()};store.set(ACCOUNT_KEY,accounts);
+      }else{
+        if(!accounts[email]||accounts[email].hash!==result.hash)throw new Error('Adresse e-mail ou mot de passe incorrect.');
+      }
+      store.set('lapsusSession',{email,connectedAt:Date.now()});
+      setStatus(mode==='register'?'Compte local créé':'Connexion réussie');render();
+    }catch(err){if(msg)msg.textContent=err.message;}
   }else if(f==='words'){
     words=$('#hwWords').value.split(',').map(s=>s.trim()).filter(Boolean);
     store.set('hwWords',words);classify();setStatus('Mots enregistrés');render();
@@ -554,6 +647,8 @@ document.addEventListener('change',async e=>{
     cfg.on=t.checked;store.set('notif',cfg);
   }else if(t.id==='notifMin'){
     const cfg=store.get('notif',{on:false,min:10});cfg.min=+t.value;store.set('notif',cfg);
+  }else if(t.id==='themeSelect'){
+    applyTheme(t.value);
   }
 });
 
@@ -564,7 +659,7 @@ function checkNotifs(){
   if(!cfg.on||typeof Notification==='undefined'||Notification.permission!=='granted')return;
   const now=Date.now();
   for(const ev of events){
-    if(ev.kind==='hw'||ev.allDay||ev.status==='CANCELLED')continue;
+    if(ev.kind!=='course'||ev.allDay||ev.status==='CANCELLED')continue;
     const diff=(ev.start-now)/60000;
     if(diff>0&&diff<=cfg.min&&!notified.has(ev.key)){
       notified.add(ev.key);
@@ -581,15 +676,20 @@ function checkNotifs(){
 // ---------- Démarrage ----------
 // Nettoyage des anciens réglages du relais (la clé n'est plus utilisée)
 try{localStorage.removeItem('relay');localStorage.removeItem('relayKey');}catch(e){}
-applyTheme(store.get('theme',matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'));
+applyTheme(store.get('themePreference',store.get('theme','system')));
+try{matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>{if(store.get('themePreference',store.get('theme','system'))==='system')applyTheme('system');});}catch(e){}
 const cached=store.get('icsText','');
 if(cached){try{loadICS(cached);}catch(e){console.error(e);}}
+const cachedHw=store.get('hwICStext','');
+if(cachedHw){try{hwFeedEvents=parseICS(cachedHw).events.sort((a,b)=>a.start-b.start);store.set('hwFeedEvents',hwFeedEvents);}catch(e){console.error(e);}}
+const cachedEval=store.get('evalICStext','');
+if(cachedEval){try{evalFeedEvents=parseICS(cachedEval).events.sort((a,b)=>a.start-b.start);store.set('evalFeedEvents',evalFeedEvents);}catch(e){console.error(e);}}
 const last=store.get('lastSync',0);
 if(last)setStatus('Dernière synchro : '+new Date(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
 render();
-if(store.get('icsUrl',''))refresh();
+if(store.get('icsUrl','')||store.get('homeworkUrl','')||store.get('controlsUrl',''))refresh();
 setInterval(refresh,10*60000);
 setInterval(()=>{if((view==='home'||view==='agenda')&&!typing())render();checkNotifs();},30000);
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='visible'&&Date.now()-store.get('lastSync',0)>5*60000&&store.get('icsUrl',''))refresh();
+  if(document.visibilityState==='visible'&&Date.now()-store.get('lastSync',0)>5*60000&&(store.get('icsUrl','')||store.get('homeworkUrl','')||store.get('controlsUrl','')))refresh();
 });
