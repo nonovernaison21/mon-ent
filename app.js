@@ -1,13 +1,11 @@
 'use strict';
 
-// ---------- Configuration ----------
 const CONFIG={
   RELAY_URL:'https://ent-relais.nonovernaison21.workers.dev',
   SUPABASE_URL:'https://wrrfblhxomsegdyadens.supabase.co',
   SUPABASE_KEY:'sb_publishable_Y6sU39QsYtTFnVeocHjAiA_4yFIEHFu'
 };
 
-/*PARSER-START*/
 const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x;};
 const startOfDay=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate());
 
@@ -129,7 +127,6 @@ function parseICS(text){
   const ov=new Set(events.filter(e=>e.override).map(e=>e.uid+'|'+e.override));
   return {events:events.filter(e=>!(e.recurring&&ov.has(e.uid+'|'+e.start.getTime()))),cal};
 }
-/*PARSER-END*/
 
 const $=s=>document.querySelector(s);
 let NS='';
@@ -140,7 +137,6 @@ const store={
   set(k,v){try{localStorage.setItem(K(k),JSON.stringify(v));}catch(e){}}
 };
 const uid=()=>crypto.randomUUID?crypto.randomUUID():'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const r=Math.random()*16|0;return (c==='x'?r:(r&3|8)).toString(16);});
-const isUuid=s=>/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s));
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
 const fmtTime=d=>d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'});
@@ -195,7 +191,6 @@ function loadState(){
   if(ce){try{evalFeedEvents=parseICS(ce).events.sort((a,b)=>a.start-b.start);store.set('evalFeedEvents',evalFeedEvents);}catch(e){console.error(e);}}
 }
 let hwFilter='all',showDone=false;
-const openSecs=new Set();
 let hwRx=null;
 const saveHw=()=>store.set('homework',hw);
 
@@ -214,11 +209,6 @@ function classify(){
     if(hwRx&&hwRx.test(t+' '+norm(e.description))){e.kind='hw';continue;}
     e.kind='course';
   }
-}
-function stripLabel(t){
-  const ws=words.map(w=>w.trim()).filter(Boolean).sort((a,b)=>b.length-a.length);
-  if(!ws.length)return t;
-  return t.replace(new RegExp('^('+ws.map(rxEsc).join('|')+')(?=[\\s:\\-–]|$)\\s*[:\\-–]?\\s*','i'),'');
 }
 function feedItemFromEvent(e,type){
   let title=(e.title||'').trim(),subject=(e.categories||'').split(',')[0].trim();
@@ -240,6 +230,11 @@ function hwItems(){
   return imported.concat(man);
 }
 function evalItems(){return evalFeedEvents.filter(e=>e.status!=='CANCELLED').map(e=>{const x=feedItemFromEvent(e,'eval');x.done=!!ctrlDone[x.id];return x;}).sort(byDue);}
+function todoItems(){
+  const allHw=hwItems().filter(h=>!h.done);
+  const ctrls=evalItems().filter(c=>!c.done&&parseISO(c.due)>=startOfDay(new Date()));
+  return allHw.concat(ctrls);
+}
 const byDue=(a,b)=>a.due.localeCompare(b.due);
 const sched=day=>{const s=startOfDay(day),e=addDays(s,1);return events.filter(ev=>ev.kind==='course'&&ev.start<e&&ev.end>s);};
 function groupItems(items){
@@ -263,7 +258,7 @@ function showLoader(t,s){const l=$('#loader');if(!l)return;const a=$('#loaderTit
 function hideLoader(){const l=$('#loader');if(l)l.hidden=true;}
 async function withLoader(t,s,p){showLoader(t,s);try{return await p;}finally{hideLoader();}}
 
-function setStatus(t,err){const s=$('#status');s.textContent=t;s.className='status'+(err?' err':'');}
+function setStatus(t,err){const s=$('#status');if(s){s.textContent=t;s.className='status'+(err?' err':'');}}
 async function fetchCalendarUrl(url){
   const r=await fetch(CONFIG.RELAY_URL+'?url='+encodeURIComponent(url),{cache:'no-store'});
   if(!r.ok){let m='Erreur '+r.status;try{const j=await r.json();if(j.error)m=j.error;}catch(e){}throw new Error(m);}
@@ -335,6 +330,10 @@ function hwRow(h){
 }
 const list=(html,empty)=>html?`<div class="list">${html}</div>`:`<p class="empty">${esc(empty)}</p>`;
 
+function secHead(title, rightHtml = '') {
+  return `<div class="sech"><h2>${esc(title)}</h2>${rightHtml}</div>`;
+}
+
 function viewHome(){
   if(!events.length&&!hw.length)return `<h1>Bienvenue</h1>
     <p class="sub">Aucun calendrier chargé pour l'instant.</p>
@@ -367,64 +366,46 @@ function viewHome(){
   ${evals.length?`<h2>Contrôles à venir</h2>${groupedControls(evals)}`:''}`;
 }
 
-// Bandes fixes et calcul automatique de la pause déjeuner
 function getFixedBands(dayEvents, dayDate) {
   const ds = startOfDay(dayDate);
   const mm = e => e.getHours() * 60 + e.getMinutes();
-  
   const morningRec = { s: 10 * 60 + 5, e: 10 * 60 + 20, label: '' };
   const afternoonRec = { s: 14 * 60 + 55, e: 15 * 60 + 10, label: '' };
-
   const windowStart = 11 * 60 + 15;
   const windowEnd = 14 * 60;
-  
   const conflicting = dayEvents.filter(e => {
     if (e.allDay || e.status === 'CANCELLED') return false;
     const s = e.start < ds ? 0 : mm(e.start);
     const en = mm(e.end);
     return s < windowEnd && en > windowStart;
   });
-
-  let lunchStart = 12 * 60;
-  let lunchEnd = 13 * 60;
-
+  let lunchStart = 12 * 60, lunchEnd = 13 * 60;
   if (conflicting.length) {
     let bestStart = windowStart, maxDuration = 0;
     const sorted = conflicting.map(e => ({
       s: Math.max(windowStart, mm(e.start)),
       e: Math.min(windowEnd, mm(e.end))
     })).sort((a, b) => a.s - b.s);
-
     let cursorTime = windowStart;
     for (const block of sorted) {
-      if (block.s - cursorTime > maxDuration) {
-        maxDuration = block.s - cursorTime;
-        bestStart = cursorTime;
-        lunchEnd = block.s;
-      }
+      if (block.s - cursorTime > maxDuration) { maxDuration = block.s - cursorTime; bestStart = cursorTime; lunchEnd = block.s; }
       cursorTime = Math.max(cursorTime, block.e);
     }
-    if (windowEnd - cursorTime > maxDuration) {
-      bestStart = cursorTime;
-      lunchEnd = windowEnd;
-    }
+    if (windowEnd - cursorTime > maxDuration) { bestStart = cursorTime; lunchEnd = windowEnd; }
     lunchStart = bestStart;
     if (lunchEnd - lunchStart < 45) lunchEnd = Math.min(windowEnd, lunchStart + 60);
     if (lunchEnd - lunchStart > 90) lunchEnd = lunchStart + 75;
   }
-
   const lunch = { s: lunchStart, e: lunchEnd, label: 'Déjeuner' };
   return [morningRec, lunch, afternoonRec];
 }
 
-function timeGrid(mon, singleDayIndex = null) {
+function timeGrid(mon) {
   const now = new Date();
   const isMobile = window.innerWidth <= 760;
-  
   let days = [];
   if (isMobile) {
-    const targetDate = singleDayIndex !== null ? addDays(mon, singleDayIndex) : cursor;
-    days = [{ d: targetDate, l: sched(targetDate) }];
+    days = [{ d: cursor, l: sched(cursor) }];
   } else {
     for (let i = 0; i < 7; i++) {
       const d = addDays(mon, i), l = sched(d);
@@ -434,34 +415,24 @@ function timeGrid(mon, singleDayIndex = null) {
   }
 
   const mm = e => e.getHours() * 60 + e.getMinutes();
-  const h0 = 8.25 * 60; // 8h15
-  const h1 = 18 * 60;   // 18h00
+  const h0 = 8.25 * 60, h1 = 18 * 60;
   const HH = 60, H = (18 - 8.25) * HH;
   const y = min => (min - h0) * HH / 60;
 
   const hoursList = [
-    { m: 8*60+15, label: '8h15' },
-    { m: 9*60+10, label: '9h10' },
-    { m: 10*60+5, label: '10h05' },
-    { m: 10*60+20, label: '10h20' },
-    { m: 11*60+15, label: '11h15' },
-    { m: 12*60+10, label: '12h10' },
-    { m: 13*60+5, label: '13h05' },
-    { m: 14*60, label: '14h00' },
-    { m: 14*60+55, label: '14h55' },
-    { m: 15*60+10, label: '15h10' },
-    { m: 16*60+5, label: '16h05' },
-    { m: 17*60, label: '17h00' }
+    { m: 8*60+15, label: '8h15' }, { m: 9*60+10, label: '9h10' },
+    { m: 10*60+5, label: '10h05' }, { m: 10*60+20, label: '10h20' },
+    { m: 11*60+15, label: '11h15' }, { m: 12*60+10, label: '12h10' },
+    { m: 13*60+5, label: '13h05' }, { m: 14*60, label: '14h00' },
+    { m: 14*60+55, label: '14h55' }, { m: 15*60+10, label: '15h10' },
+    { m: 16*60+5, label: '16h05' }, { m: 17*60, label: '17h00' }
   ];
-
   const hours = hoursList.map(h => `<i style="top:${y(h.m)}px">${h.label}</i>`).join('');
 
   const cols = days.map(({ d, l }) => {
     const ds = startOfDay(d), de = addDays(ds, 1);
     const items = l.filter(e => !e.allDay).map(e => ({
-      e,
-      s: e.start < ds ? h0 : Math.max(h0, mm(e.start)),
-      e2: e.end >= de ? h1 : Math.min(h1, mm(e.end))
+      e, s: e.start < ds ? h0 : Math.max(h0, mm(e.start)), e2: e.end >= de ? h1 : Math.min(h1, mm(e.end))
     })).filter(x => x.e2 > x.s).sort((a, b) => a.s - b.s || a.e2 - b.e2);
 
     let cluster = [], cEnd = -1;
@@ -493,12 +464,10 @@ function timeGrid(mon, singleDayIndex = null) {
     const bands = bandsData.map(b => {
       const a2 = Math.max(b.s, h0), b2 = Math.min(b.e, h1);
       const isLunch = b.label === 'Déjeuner';
-      const cls = isLunch ? 'band lunch' : 'band pm';
-      return b2 > a2 ? `<div class="${cls}" style="top:${y(a2)}px;height:${y(b2) - y(a2)}px">${b.label && y(b2) - y(a2) > 22 ? `<span>${b.label}</span>` : ''}</div>` : '';
+      return b2 > a2 ? `<div class="${isLunch ? 'band lunch' : 'band pm'}" style="top:${y(a2)}px;height:${y(b2) - y(a2)}px">${b.label && y(b2) - y(a2) > 22 ? `<span>${b.label}</span>` : ''}</div>` : '';
     }).join('');
-    
-    const isToday = sameDay(d, now);
-    const nowMin = mm(now);
+
+    const isToday = sameDay(d, now), nowMin = mm(now);
     const nl = isToday && nowMin >= h0 && nowMin <= h1 ? `<div class="nowline" style="top:${y(nowMin)}px"></div>` : '';
     return `<div class="dcol${isToday ? ' today' : ''}" style="height:${H}px">${bands}${blocks}${nl}</div>`;
   }).join('');
@@ -515,11 +484,10 @@ function viewAgenda(){
   const f=d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
   const mon=mondayOf(cursor),sun=addDays(mon,6);
   const thisWeek=sameDay(mon,mondayOf(new Date()));
-  let cols='',nc=0;
+  let cols='';
   for(let i=0;i<7;i++){
     const d=addDays(mon,i),l=sched(d);
     if(i>=5&&!l.length)continue;
-    nc++;
     cols+=`<section class="day${sameDay(d,new Date())?' today':''}"><h3>${esc(cap(d.toLocaleDateString('fr-FR',{weekday:'long'})))} <span>${d.getDate()}</span></h3>${list(l.map(e=>evRow(e)).join(''),'Rien')}</section>`;
   }
   return `<h1>${esc(f(mon)+' – '+f(sun))}</h1>
@@ -551,39 +519,21 @@ function viewHw(){
   <div class="tools"><div class="seg">${seg}</div><button class="quiet" data-act="toggledone">${showDone?'Masquer les devoirs faits':'Afficher les devoirs faits'}</button></div>
   ${showHw?`<h2>Devoirs par matière</h2>${groupedHomework(hwList)||`<p class="empty">${showDone?'Aucun devoir.':'Aucun devoir en attente.'}</p>`}`:''}
   ${showCt?`<h2>Contrôles et évaluations par matière</h2>${ctList.length?groupedControls(ctList):`<p class="empty">${showDone?'Aucun contrôle à venir.':'Aucun contrôle à venir. Ajoute le lien ICS des contrôles dans Réglages › Connexion › ENT.'}</p>`}`:''}
-  <p class="foot">Les devoirs et les contrôles viennent de leurs liens ICS respectifs. Ils n’apparaissent plus dans l’agenda des cours.</p>`;
+  <p class="foot">Les devoirs et les contrôles viennent de leurs liens ICS respectifs.</p>`;
 }
 
-// Vues Mon Lycée
-function viewLyceeMail(){
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
-  <h1>Mail</h1>
-  <div class="panel"><p class="m">Les mails de l’ENT s’afficheront ici.</p></div>`;
-}
-function viewLyceeActu(){
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
-  <h1>Actus</h1>
-  <div class="panel"><p class="m">Les actualités du lycée s’afficheront ici.</p></div>`;
-}
+function viewLyceeMail(){return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div><h1>Mail</h1><div class="panel"><p class="m">Les mails de l’ENT s’afficheront ici.</p></div>`;}
+function viewLyceeActu(){return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div><h1>Actus</h1><div class="panel"><p class="m">Les actualités du lycée s’afficheront ici.</p></div>`;}
 function viewLyceeCahier(){
   const today=isoDay(startOfDay(new Date()));
   const cahier=hwItems().filter(h=>h.due>=today).sort(byDue).slice(0,30);
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
-  <h1>Cahier de texte</h1>
-  ${list(cahier.map(hwRow).join(''),'Aucun devoir à venir dans le cahier de texte.')}`;
+  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div><h1>Cahier de texte</h1>${list(cahier.map(hwRow).join(''),'Aucun devoir à venir dans le cahier de texte.')}`;
 }
 function viewLyceeProfil(){
   const created=user&&user.created_at?new Date(user.created_at).toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}):'';
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
-  <h1>Mon profil</h1>
-  <div class="panel">
-    <p><span class="m">E-mail</span><br><strong>${esc(user?user.email:'')}</strong></p>
-    ${created?`<p><span class="m">Compte créé le</span><br><strong>${esc(created)}</strong></p>`:''}
-    <p class="m">Ton nom, ta classe et ton établissement s’afficheront ici avec la connexion à l’ENT.</p>
-  </div>`;
+  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div><h1>Mon profil</h1><div class="panel"><p><span class="m">E-mail</span><br><strong>${esc(user?user.email:'')}</strong></p>${created?`<p><span class="m">Compte créé le</span><br><strong>${esc(created)}</strong></p>`:''}<p class="m">Ton nom, ta classe et ton établissement s’afficheront ici avec la connexion à l’ENT.</p></div>`;
 }
 
-// Vues Connexion
 function viewConnexionEnt(){
   const url=store.get('icsUrl',''),homeworkUrl=store.get('homeworkUrl',''),controlsUrl=store.get('controlsUrl','');
   return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
@@ -610,71 +560,37 @@ function viewConnexionEnt(){
 
 function viewConnexionApparence(){
   const themePref=store.get('themePreference',store.get('theme','system'));
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
-  <h1>Apparence</h1>
-  <div class="panel">
-    <div class="seg">${[['light','Clair'],['dark','Sombre'],['system','Système']].map(([k,l])=>`<button class="${themePref===k?'on':''}" data-act="themeset" data-v="${k}">${l}</button>`).join('')}</div>
-    <p class="m">Le mode Système suit automatiquement le thème clair ou sombre de ton appareil.</p>
-  </div>`;
+  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div><h1>Apparence</h1><div class="panel"><div class="seg">${[['light','Clair'],['dark','Sombre'],['system','Système']].map(([k,l])=>`<button class="${themePref===k?'on':''}" data-act="themeset" data-v="${k}">${l}</button>`).join('')}</div><p class="m">Le mode Système suit automatiquement le thème clair ou sombre de ton appareil.</p></div>`;
 }
 
 function viewConnexionCouleurs(){
   const subs=[...new Set(events.filter(e=>e.kind==='course').map(e=>e.title))].sort((a,b)=>a.localeCompare(b,'fr'));
   const pal=subs.length?subs.map(s=>{const c=colors[s]||hslHex(hue(s),55,document.documentElement.dataset.theme==='dark'?62:40);return `<div class="crow"><span class="cn">${esc(s)}</span>${colors[s]?`<button class="lnk" data-act="colorreset" data-k="${esc(s)}">Par défaut</button>`:''}<input type="color" value="${c}" data-color="${esc(s)}" aria-label="Couleur de ${esc(s)}"></div>`;}).join(''):'<p class="m">Charge ton emploi du temps pour choisir la couleur de chaque matière.</p>';
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
-  <h1>Couleur par matière</h1>
-  <div class="panel">${pal}<p class="m">La couleur sert dans l’emploi du temps et sur l’accueil.</p></div>`;
+  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div><h1>Couleur par matière</h1><div class="panel">${pal}<p class="m">La couleur sert dans l’emploi du temps et sur l’accueil.</p></div>`;
 }
 
 function viewConnexionCompte(){
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
-  <h1>Compte</h1>
-  <div class="panel">
-    <p>Connecté en tant que <strong>${esc(user?user.email:'')}</strong></p>
-    <p class="m">Tes devoirs, contrôles cochés et réglages sont enregistrés en ligne.</p>
-    <div class="row">
-      <button class="btn" type="button" data-act="logout">Se déconnecter</button>
-      <button class="btn" type="button" data-act="wipe">Tout effacer</button>
-      <button class="btn danger" type="button" data-act="deleteaccount">Supprimer le compte</button>
-    </div>
-  </div>`;
+  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div><h1>Compte</h1><div class="panel"><p>Connecté en tant que <strong>${esc(user?user.email:'')}</strong></p><p class="m">Tes devoirs, contrôles cochés et réglages sont enregistrés en ligne.</p><div class="row"><button class="btn" type="button" data-act="logout">Se déconnecter</button><button class="btn" type="button" data-act="wipe">Tout effacer</button><button class="btn danger" type="button" data-act="deleteaccount">Supprimer le compte</button></div></div>`;
 }
 
 function viewSet(){
   const n=store.get('notif',{on:false,min:10});
-  const lyceeLinks=`<div class="panel" style="display:flex;flex-direction:column;gap:8px;">
-    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-mail">Mail</button>
-    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-actu">Actus</button>
-    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-cahier">Cahier de texte</button>
-    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-profil">Mon profil</button>
-  </div>`;
-  const connLinks=`<div class="panel" style="display:flex;flex-direction:column;gap:8px;">
-    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-ent">ENT</button>
-    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-apparence">Apparence</button>
-    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-couleurs">Couleur par matière</button>
-    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-compte">Compte</button>
-  </div>`;
-
-  return `<h1>Réglages</h1>
-  <h2>Mon lycée</h2>${lyceeLinks}
-  <h2>Connexion</h2>${connLinks}
-  <h2>Notifications</h2>
-  <div class="panel">
-    <div class="row"><label class="chk"><input type="checkbox" id="notifOn" ${n.on?'checked':''}> Rappel avant chaque cours</label>
-    <select id="notifMin" aria-label="Délai du rappel">${[5,10,15,30].map(x=>`<option value="${x}"${x===n.min?' selected':''}>${x} min avant</option>`).join('')}</select></div>
-    <p class="m">Fonctionne tant que cette page reste ouverte.</p>
-  </div>`;
+  const lyceeLinks=`<div class="panel" style="display:flex;flex-direction:column;gap:8px;"><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-mail">Mail</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-actu">Actus</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-cahier">Cahier de texte</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-profil">Mon profil</button></div>`;
+  const connLinks=`<div class="panel" style="display:flex;flex-direction:column;gap:8px;"><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-ent">ENT</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-apparence">Apparence</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-couleurs">Couleur par matière</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-compte">Compte</button></div>`;
+  return `<h1>Réglages</h1><h2>Mon lycée</h2>${lyceeLinks}<h2>Connexion</h2>${connLinks}<h2>Notifications</h2><div class="panel"><div class="row"><label class="chk"><input type="checkbox" id="notifOn" ${n.on?'checked':''}> Rappel avant chaque cours</label><select id="notifMin" aria-label="Délai du rappel">${[5,10,15,30].map(x=>`<option value="${x}"${x===n.min?' selected':''}>${x} min avant</option>`).join('')}</select></div><p class="m">Fonctionne tant que cette page reste ouverte.</p></div>`;
 }
 
 function render(){
   const todo=todoItems().length;
-  $('#nav').innerHTML=VIEWS.map(([k,l,ic])=>`<button class="nv${k===view?' on':''}" data-act="view" data-v="${k}"${k===view?' aria-current="page"':''}>${svg(ic)}<span>${l}</span>${k==='hw'&&todo?`<i class="n">${todo}</i>`:''}</button>`).join('');
+  const navEl=$('#nav');
+  if(navEl) navEl.innerHTML=VIEWS.map(([k,l,ic])=>`<button class="nv${k===view?' on':''}" data-act="view" data-v="${k}"${k===view?' aria-current="page"':''}>${svg(ic)}<span>${l}</span>${k==='hw'&&todo?`<i class="n">${todo}</i>`:''}</button>`).join('');
   const f={
     home:viewHome,agenda:viewAgenda,hw:viewHw,set:viewSet,
     'lycee-mail':viewLyceeMail,'lycee-actu':viewLyceeActu,'lycee-cahier':viewLyceeCahier,'lycee-profil':viewLyceeProfil,
     'connexion-ent':viewConnexionEnt,'connexion-apparence':viewConnexionApparence,'connexion-couleurs':viewConnexionCouleurs,'connexion-compte':viewConnexionCompte
   }[view]||viewHome;
-  $('#main').innerHTML=f();
+  const mainEl=$('#main');
+  if(mainEl) mainEl.innerHTML=f();
 }
 
 function demoICS(){
@@ -760,7 +676,12 @@ const pushSettings=()=>remote(user&&sb?sb.from('settings').upsert(settingsRow())
 const hwRowData=h=>({id:h.id,user_id:user.id,title:h.title,subject:h.subject||'',due:h.due,notes:h.notes||'',done:!!h.done});
 const pushHwRow=h=>remote(user&&sb?sb.from('homework').upsert(hwRowData(h)):null);
 const pushDone=(kind,id,on)=>remote(user&&sb?(on?sb.from('done_items').upsert({user_id:user.id,kind,item_id:id},{onConflict:'user_id,kind,item_id'}):sb.from('done_items').delete().eq('kind',kind).eq('item_id',id)):null);
-function setTheme(p){applyTheme(p);pushSettings();}
+function setTheme(p){
+  store.set('themePreference',p);
+  const dark=p==='dark'||(p==='system'&&window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.setAttribute('data-theme',dark?'dark':'light');
+  pushSettings();
+}
 
 async function enterApp(){
   NS='u:'+user.id+':';
@@ -769,7 +690,6 @@ async function enterApp(){
   const last=store.get('lastSync',0);
   if(last)setStatus('Dernière synchro : '+new Date(last).toLocaleString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}));
   render();window.scrollTo(0,0);
-  render();
   if(hasFeeds())refresh();
 }
 function leaveApp(){user=null;NS='';resetState();setStatus('');applyAuth();window.scrollTo(0,0);}
@@ -819,7 +739,7 @@ function setAuthMode(mode){
   help.textContent=register?'Au moins 8 caractères.':'Saisis l’adresse e-mail et le mot de passe de ton compte.';
   document.querySelectorAll('#gate [data-act="authmode"]').forEach(b=>b.classList.toggle('on',b.dataset.v===(register?'register':'login')));
   const sub=document.querySelector('#gate .sub');if(sub)sub.textContent=register?'Crée ton compte pour commencer.':'Content de te revoir.';
-  const am=$('#authMessage');am.style.color='';am.textContent='';
+  const am=$('#authMessage');if(am){am.style.color='';am.textContent='';}
 }
 
 document.addEventListener('click',e=>{
@@ -922,6 +842,6 @@ document.addEventListener('change',async e=>{
   } catch(err) {
     console.error("Erreur critique au démarrage :", err);
   } finally {
-    hideLoader(); // S'assure toujours que l'écran de chargement disparaît quoi qu'il arrive
+    hideLoader();
   }
 })();
