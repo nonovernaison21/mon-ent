@@ -151,16 +151,13 @@ function hslHex(h,s,l){s/=100;l/=100;const a=s*Math.min(l,1-l);const f=n=>{const
 function hue(s){let h=0;for(const c of s)h=(h*31+c.charCodeAt(0))%360;return h;}
 const subjectColor=t=>colors[t]||'hsl('+hue(t)+' 55% var(--ev-l))';
 function rel(ms){const m=Math.max(1,Math.round(ms/60000));if(m<60)return m+' min';return Math.floor(m/60)+' h '+String(m%60).padStart(2,'0');}
-const typing=()=>{const a=document.activeElement;return !!a&&(a.tagName==='INPUT'||a.tagName==='SELECT'||a.tagName==='TEXTAREA');};
+const typing=()=>!!document.activeElement&&['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName);
 
 const ICON={
   home:'<path d="M3 11.5 12 4l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
   cal:'<rect x="3" y="4.5" width="18" height="16.5" rx="3.5"/><path d="M3 10h18M8 2.5v4M16 2.5v4"/>',
   hw:'<rect x="3.5" y="3.5" width="17" height="17" rx="4.5"/><path d="m8.5 12.2 2.5 2.5 4.5-5"/>',
-  set:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
-  sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
-  out:'<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
-  moon:'<path d="M20 14.5A8.5 8.5 0 0 1 9.5 4 8.5 8.5 0 1 0 20 14.5z"/>'
+  set:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>'
 };
 const svg=(n,s)=>`<svg viewBox="0 0 24 24" width="${s||22}" height="${s||22}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[n]}</svg>`;
 
@@ -170,10 +167,11 @@ const VIEWS=[['home','Accueil','home'],['agenda','Agenda','cal'],['hw','Devoirs'
 const DEFAULT_WORDS=['travail à faire','devoir à faire','devoir maison','devoirs','à faire','à rendre','à préparer','à apprendre','dm','homework'];
 const EVAL_RE=/(^|[^a-z0-9])(devoir surveille|ds|dst|controle|interro|interrogation|evaluation|examen|bac blanc|partiel)([^a-z0-9]|$)/;
 
-let view=store.get('view','home');
+// Forçage de l'ouverture sur 'home' au démarrage, sans persister de vue 'réglages'
+let view='home';
+store.set('view','home');
+
 let mode=store.get('mode','week');
-if(['day','week','month'].includes(view)){mode=view;view='agenda';}
-if(!VIEWS.some(v=>v[0]===view))view='home';
 let cursor=startOfDay(new Date());
 let events=[];
 let hwFeedEvents=[],evalFeedEvents=[],hw=[],autoDone={},ctrlDone={},ov={},words=DEFAULT_WORDS.slice(),colors={};
@@ -484,20 +482,13 @@ function viewAgenda(){
   const f=d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
   const mon=mondayOf(cursor),sun=addDays(mon,6);
   const thisWeek=sameDay(mon,mondayOf(new Date()));
-  let cols='';
-  for(let i=0;i<7;i++){
-    const d=addDays(mon,i),l=sched(d);
-    if(i>=5&&!l.length)continue;
-    cols+=`<section class="day${sameDay(d,new Date())?' today':''}"><h3>${esc(cap(d.toLocaleDateString('fr-FR',{weekday:'long'})))} <span>${d.getDate()}</span></h3>${list(l.map(e=>evRow(e)).join(''),'Rien')}</section>`;
-  }
   return `<h1>${esc(f(mon)+' – '+f(sun))}</h1>
   <p class="sub">${thisWeek?'Cette semaine':'Semaine du '+esc(mon.toLocaleDateString('fr-FR',{day:'numeric',month:'long',year:'numeric'}))}</p>
   <div class="tools">
     <div class="step"><button class="btn" data-act="prev" aria-label="Semaine précédente">‹</button><button class="btn" data-act="next" aria-label="Semaine suivante">›</button></div>
     <div class="step"><input type="date" id="agendaDate" value="${isoDay(cursor)}" aria-label="Choisir une date"><button class="btn" data-act="today"${thisWeek?' disabled':''}>Cette semaine</button></div>
   </div>
-  ${timeGrid(mon)}
-  <div class="weekgrid">${cols}</div>`;
+  ${timeGrid(mon)}`;
 }
 
 function viewHw(){
@@ -558,15 +549,23 @@ function viewConnexionEnt(){
   </div>`;
 }
 
+// Vue Apparence fusionnée avec la sélection des couleurs par matière en bas
 function viewConnexionApparence(){
   const themePref=store.get('themePreference',store.get('theme','system'));
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div><h1>Apparence</h1><div class="panel"><div class="seg">${[['light','Clair'],['dark','Sombre'],['system','Système']].map(([k,l])=>`<button class="${themePref===k?'on':''}" data-act="themeset" data-v="${k}">${l}</button>`).join('')}</div><p class="m">Le mode Système suit automatiquement le thème clair ou sombre de ton appareil.</p></div>`;
-}
-
-function viewConnexionCouleurs(){
   const subs=[...new Set(events.filter(e=>e.kind==='course').map(e=>e.title))].sort((a,b)=>a.localeCompare(b,'fr'));
   const pal=subs.length?subs.map(s=>{const c=colors[s]||hslHex(hue(s),55,document.documentElement.dataset.theme==='dark'?62:40);return `<div class="crow"><span class="cn">${esc(s)}</span>${colors[s]?`<button class="lnk" data-act="colorreset" data-k="${esc(s)}">Par défaut</button>`:''}<input type="color" value="${c}" data-color="${esc(s)}" aria-label="Couleur de ${esc(s)}"></div>`;}).join(''):'<p class="m">Charge ton emploi du temps pour choisir la couleur de chaque matière.</p>';
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div><h1>Couleur par matière</h1><div class="panel">${pal}<p class="m">La couleur sert dans l’emploi du temps et sur l’accueil.</p></div>`;
+  
+  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
+  <h1>Apparence</h1>
+  <div class="panel">
+    <div class="seg">${[['light','Clair'],['dark','Sombre'],['system','Système']].map(([k,l])=>`<button class="${themePref===k?'on':''}" data-act="themeset" data-v="${k}">${l}</button>`).join('')}</div>
+    <p class="m">Le mode Système suit automatiquement le thème clair ou sombre de ton appareil.</p>
+  </div>
+  <h2>Couleur par matière</h2>
+  <div class="panel">
+    ${pal}
+    <p class="m">La couleur sert dans l’emploi du temps et sur l’accueil.</p>
+  </div>`;
 }
 
 function viewConnexionCompte(){
@@ -576,7 +575,7 @@ function viewConnexionCompte(){
 function viewSet(){
   const n=store.get('notif',{on:false,min:10});
   const lyceeLinks=`<div class="panel" style="display:flex;flex-direction:column;gap:8px;"><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-mail">Mail</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-actu">Actus</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-cahier">Cahier de texte</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-profil">Mon profil</button></div>`;
-  const connLinks=`<div class="panel" style="display:flex;flex-direction:column;gap:8px;"><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-ent">ENT</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-apparence">Apparence</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-couleurs">Couleur par matière</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-compte">Compte</button></div>`;
+  const connLinks=`<div class="panel" style="display:flex;flex-direction:column;gap:8px;"><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-ent">ENT</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-apparence">Apparence & Couleurs</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-compte">Compte</button></div>`;
   return `<h1>Réglages</h1><h2>Mon lycée</h2>${lyceeLinks}<h2>Connexion</h2>${connLinks}<h2>Notifications</h2><div class="panel"><div class="row"><label class="chk"><input type="checkbox" id="notifOn" ${n.on?'checked':''}> Rappel avant chaque cours</label><select id="notifMin" aria-label="Délai du rappel">${[5,10,15,30].map(x=>`<option value="${x}"${x===n.min?' selected':''}>${x} min avant</option>`).join('')}</select></div><p class="m">Fonctionne tant que cette page reste ouverte.</p></div>`;
 }
 
@@ -587,7 +586,7 @@ function render(){
   const f={
     home:viewHome,agenda:viewAgenda,hw:viewHw,set:viewSet,
     'lycee-mail':viewLyceeMail,'lycee-actu':viewLyceeActu,'lycee-cahier':viewLyceeCahier,'lycee-profil':viewLyceeProfil,
-    'connexion-ent':viewConnexionEnt,'connexion-apparence':viewConnexionApparence,'connexion-couleurs':viewConnexionCouleurs,'connexion-compte':viewConnexionCompte
+    'connexion-ent':viewConnexionEnt,'connexion-apparence':viewConnexionApparence,'connexion-compte':viewConnexionCompte
   }[view]||viewHome;
   const mainEl=$('#main');
   if(mainEl) mainEl.innerHTML=f();
@@ -745,10 +744,10 @@ function setAuthMode(mode){
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-act]');if(!t)return;
   const a=t.dataset.act,id=t.dataset.id;
-  if(a==='view'){view=t.dataset.v;store.set('view',view);render();window.scrollTo(0,0);}
+  if(a==='view'){view=t.dataset.v;render();window.scrollTo(0,0);}
   else if(a==='prev'||a==='next'){cursor=addDays(cursor,(a==='next'?7:-7));render();}
   else if(a==='today'){cursor=startOfDay(new Date());render();}
-  else if(a==='gotoweek'){cursor=startOfDay(new Date());view='agenda';store.set('view',view);render();window.scrollTo(0,0);}
+  else if(a==='gotoweek'){cursor=startOfDay(new Date());view='agenda';render();window.scrollTo(0,0);}
   else if(a==='hwfilter'){hwFilter=t.dataset.v;render();}
   else if(a==='toggledone'){showDone=!showDone;render();}
   else if(a==='themeset'){setTheme(t.dataset.v);render();}
