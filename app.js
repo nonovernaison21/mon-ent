@@ -401,10 +401,11 @@ function viewAgenda(){
   const f=d=>d.toLocaleDateString('fr-FR',{day:'numeric',month:'short'});
   const mon=mondayOf(cursor),sun=addDays(mon,6);
   const thisWeek=sameDay(mon,mondayOf(new Date()));
-  let cols='';
+  let cols='',nc=0;
   for(let i=0;i<7;i++){
     const d=addDays(mon,i),l=sched(d);
     if(i>=5&&!l.length)continue;
+    nc++;
     cols+=`<section class="day${sameDay(d,new Date())?' today':''}"><h3>${esc(cap(d.toLocaleDateString('fr-FR',{weekday:'long'})))} <span>${d.getDate()}</span></h3>${list(l.map(e=>evRow(e)).join(''),'Rien')}</section>`;
   }
   return `<h1>${esc(f(mon)+' – '+f(sun))}</h1>
@@ -413,7 +414,7 @@ function viewAgenda(){
     <div class="step"><button class="btn" data-act="prev" aria-label="Semaine précédente">‹</button><button class="btn" data-act="next" aria-label="Semaine suivante">›</button></div>
     <div class="step"><input type="date" id="agendaDate" value="${isoDay(cursor)}" aria-label="Choisir une date"><button class="btn" data-act="today"${thisWeek?' disabled':''}>Cette semaine</button></div>
   </div>
-  <div class="weekgrid">${cols}</div>`;
+  <div class="weekgrid" style="--cols:${nc}">${cols}</div>`;
 }
 function viewHw(){
   const all=hwItems();
@@ -489,6 +490,7 @@ function viewSet(){
 function render(){
   const todo=todoItems().length;
   $('#nav').innerHTML=VIEWS.map(([k,l,ic])=>`<button class="nv${k===view?' on':''}" data-act="view" data-v="${k}"${k===view?' aria-current="page"':''}>${svg(ic)}<span>${l}</span>${k==='hw'&&todo?`<i class="n">${todo}</i>`:''}</button>`).join('');
+  document.body.classList.toggle('wide',view==='agenda');
   const f={home:viewHome,agenda:viewAgenda,hw:viewHw,set:viewSet}[view]||viewHome;
   $('#main').innerHTML=f();
 }
