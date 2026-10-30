@@ -96,7 +96,6 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:2px;
 .weekgrid{display:grid;grid-template-columns:minmax(0,1fr);gap:22px 18px}
 .day .ev{grid-template-columns:42px minmax(0,1fr);gap:10px}
 
-/* Grille horaire */
 .tgrid{display:grid;grid-template-columns:52px repeat(var(--cols,5),minmax(0,1fr));column-gap:8px;row-gap:6px;align-items:start}
 .th{font:600 15px/1.3 var(--f-display);padding:2px 4px}
 .th span{color:var(--muted);font-weight:500}
@@ -112,11 +111,9 @@ details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:2px;
 .band.lunch{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--muted) 16%,transparent) 0 6px,transparent 6px 12px);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 .band.lunch span{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);background:var(--surface);padding:1px 8px;border-radius:999px}
 
-/* Forme des blocs de cours (bordure légèrement arrondie, ni trop carrée, ni trop arrondie) */
 .blk{position:absolute;z-index:2;margin:1px 0 0 1px;padding:5px 8px;border-radius:8px;border-left:3px solid var(--c);background:color-mix(in srgb,var(--c) 18%,var(--surface));overflow:hidden;font-size:12px;line-height:1.25;display:flex;flex-direction:column;gap:1px}
 .blk b{font-weight:600;overflow-wrap:anywhere}
 .blk span{color:var(--muted);font-size:11.5px}
-.blk em{font-style:normal;font-size:11px;font-weight:600;color:var(--danger)}
 .blk.cancelled{opacity:.55}.blk.cancelled b{text-decoration:line-through}
 .blk.live{box-shadow:0 0 0 2px var(--ok)}
 .nowline{position:absolute;z-index:3;left:0;right:0;height:2px;background:var(--danger);pointer-events:none}
