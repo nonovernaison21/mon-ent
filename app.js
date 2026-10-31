@@ -253,7 +253,7 @@ function loadICS(text){
 }
 
 // L'écran de chargement reste au moins LOADER_MIN ms (assez pour voir l'animation) ; s'il faut plus, il reste jusqu'à la fin.
-const LOADER_MIN=4000;
+const LOADER_MIN=2000;
 let loaderSince=Date.now(),loaderTimer=null;
 function showLoader(t,s){
   const l=$('#loader');if(!l)return;
