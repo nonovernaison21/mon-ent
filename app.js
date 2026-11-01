@@ -175,10 +175,10 @@ let cursor=startOfDay(new Date());
 let events=[];
 let hwFeedEvents=[],evalFeedEvents=[],hw=[],autoDone={},ctrlDone={},ov={},words=DEFAULT_WORDS.slice(),colors={};
 let lyceePrefs=store.get('lyceePrefs',{
-  mails:{count:5,showContent:true,sort:'desc'},
-  actus:{count:4,images:true,sort:'desc'},
-  cahier:{sortByDate:true,hideDone:false,subjects:[]},
-  profil:{showName:true,showClass:true}
+  mails:{count:5,showContent:true},
+  actus:{count:4,images:true},
+  cahier:{homeCount:5,sortByDate:true,hideDone:false},
+  profil:{showEmail:true}
 });
 
 function resetState(){colors={};events=[];hwFeedEvents=[];evalFeedEvents=[];hw=[];autoDone={};ctrlDone={};ov={};words=DEFAULT_WORDS.slice();}
@@ -529,7 +529,6 @@ function viewAgenda(){
   ${timeGrid(mon)}`;
 }
 
-// Ancienne page devoirs conservée à l'identique (accessible via le bouton "Afficher tous les devoirs")
 function viewHw(){
   const all=hwItems();
   const ctrls=evalItems().filter(e=>parseISO(e.due)>=startOfDay(new Date()));
@@ -553,29 +552,11 @@ function viewHw(){
   <p class="foot">Les devoirs et les contrôles viennent de leurs liens ICS respectifs.</p>`;
 }
 
-// ----------------------------------------------------
-// NOUVELLE PAGE PRINCIPALE : MON LYCÉE
-// ----------------------------------------------------
 function viewLyceeHub(){
-  // 1. Devoirs
+  const limit=lyceePrefs.cahier.homeCount||5;
   const allHw=hwItems();
   const filteredHw=lyceePrefs.cahier.hideDone ? allHw.filter(h=>!h.done) : allHw;
-  const sortedHw=filteredHw.sort(byDue).slice(0, lyceePrefs.cahier.sortByDate ? 5 : 5);
-
-  // 2. Mails (simulation / aperçu)
-  const mailCount=lyceePrefs.mails.count || 5;
-  const dummyMails=[
-    {from:'Administration Lycée',subject:'Note d’information trimestrielle',date:'Hier',preview:'Madame, Monsieur, veuillez trouver ci-joint les informations relatives au prochain conseil de classe...'},
-    {from:'Vie Scolaire',subject:'Absence justifiée - 28/10',date:'28 oct.',preview:'Votre justificatif pour l’absence de mardi a bien été pris en compte.'},
-    {from:'Professeur de NSI',subject:'Rendu du projet web',date:'26 oct.',preview:'Pensez à bien finaliser le dépôt Git avant vendredi soir minuit.'}
-  ].slice(0, mailCount);
-
-  // 3. Actualités
-  const actuCount=lyceePrefs.actus.count || 4;
-  const dummyActus=[
-    {title:'Sortie ski et montagne',date:'30 oct.',text:'Inscriptions ouvertes auprès de la vie scolaire pour la sortie de fin de trimestre.'},
-    {title:'Journée portes ouvertes',date:'15 oct.',text:'Venez découvrir les ateliers scientifiques et techniques préparés par les élèves de Première.'}
-  ].slice(0, actuCount);
+  const sortedHw=filteredHw.sort(byDue).slice(0, limit);
 
   return `<h1>Mon lycée</h1>
   <p class="sub">Espace centralisé de la vie lycéenne</p>
@@ -590,30 +571,24 @@ function viewLyceeHub(){
     <h2>Mails</h2>
     <button class="lnk2" data-act="view" data-v="lycee-mail">Afficher tous les mails ›</button>
   </div>
-  <div class="list">
-    ${dummyMails.length ? dummyMails.map(m=>`<div class="ev"><div class="bd" style="border-left-color:var(--accent)"><div class="t">${esc(m.subject)}</div><div class="m">${esc(m.from)} · ${esc(m.date)}</div>${lyceePrefs.mails.showContent?`<div class="notes">${esc(m.preview)}</div>`:''}</div></div>`).join('') : '<p class="empty">Aucun mail récent.</p>'}
+  <div class="panel">
+    <p class="m">Indisponible pour le moment.</p>
   </div>
 
   <div class="sech">
     <h2>Actualités</h2>
     <button class="lnk2" data-act="view" data-v="lycee-actu">Afficher toutes les actualités ›</button>
   </div>
-  <div class="list">
-    ${dummyActus.length ? dummyActus.map(a=>`<div class="ev"><div class="bd" style="border-left-color:var(--warn)"><div class="t">${esc(a.title)}</div><div class="m">${esc(a.date)}</div><div class="notes">${esc(a.text)}</div></div></div>`).join('') : '<p class="empty">Aucune actualité récente.</p>'}
+  <div class="panel">
+    <p class="m">Indisponible pour le moment.</p>
   </div>`;
 }
 
-// Sous-pages dédiées
 function viewLyceeMail(){
   return `<div class="sub-header"><button class="btn" data-act="view" data-v="lycee">‹ Retour à Mon lycée</button></div>
   <h1>Tous les mails</h1>
   <div class="panel">
-    <p class="m">Boîte de réception ENT complète :</p>
-    <div class="list">
-      <div class="ev"><div class="bd" style="border-left-color:var(--accent)"><div class="t">Note d’information trimestrielle</div><div class="m">Administration Lycée · Hier</div><div class="notes">Madame, Monsieur, veuillez trouver ci-joint les informations relatives au prochain conseil de classe du premier trimestre.</div></div></div>
-      <div class="ev"><div class="bd" style="border-left-color:var(--accent)"><div class="t">Absence justifiée - 28/10</div><div class="m">Vie Scolaire · 28 oct.</div><div class="notes">Votre justificatif pour l’absence de mardi a bien été pris en compte par la vie scolaire.</div></div></div>
-      <div class="ev"><div class="bd" style="border-left-color:var(--accent)"><div class="t">Rendu du projet web</div><div class="m">Professeur de NSI · 26 oct.</div><div class="notes">Pensez à bien finaliser le dépôt Git et à vérifier vos fichiers avant vendredi soir minuit.</div></div></div>
-    </div>
+    <p class="m">Indisponible pour le moment.</p>
   </div>`;
 }
 
@@ -621,10 +596,7 @@ function viewLyceeActu(){
   return `<div class="sub-header"><button class="btn" data-act="view" data-v="lycee">‹ Retour à Mon lycée</button></div>
   <h1>Toutes les actualités</h1>
   <div class="panel">
-    <div class="list">
-      <div class="ev"><div class="bd" style="border-left-color:var(--warn)"><div class="t">Sortie ski et montagne</div><div class="m">30 oct.</div><div class="notes">Inscriptions ouvertes auprès de la vie scolaire pour la sortie de fin de trimestre. Places limitées.</div></div></div>
-      <div class="ev"><div class="bd" style="border-left-color:var(--warn)"><div class="t">Journée portes ouvertes</div><div class="m">15 oct.</div><div class="notes">Venez découvrir les ateliers scientifiques et techniques préparés par les élèves de Première.</div></div></div>
-    </div>
+    <p class="m">Indisponible pour le moment.</p>
   </div>`;
 }
 
@@ -633,10 +605,9 @@ function viewLyceeProfil(){
   return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
   <h1>Mon profil</h1>
   <div class="panel">
-    ${lyceePrefs.profil.showName?`<p><span class="m">Utilisateur</span><br><strong>${esc(user?user.email:'')}</strong></p>`:''}
+    ${lyceePrefs.profil.showEmail ? `<p><span class="m">E-mail</span><br><strong>${esc(user?user.email:'')}</strong></p>`:''}
     ${created?`<p><span class="m">Compte créé le</span><br><strong>${esc(created)}</strong></p>`:''}
-    ${lyceePrefs.profil.showClass?`<p><span class="m">Établissement & Classe</span><br><strong>Lycée · 1ère</strong></p>`:''}
-    <p class="m">Vos informations personnelles synchronisées depuis l’ENT.</p>
+    <p class="m">Ton nom, ta classe et ton établissement s’afficheront ici avec la connexion à l’ENT.</p>
   </div>`;
 }
 
@@ -644,6 +615,9 @@ function viewConnexionEnt(){
   const url=store.get('icsUrl',''),homeworkUrl=store.get('homeworkUrl',''),controlsUrl=store.get('controlsUrl','');
   return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
   <h1>ENT</h1>
+  <div class="panel" style="margin-bottom:12px">
+    <p class="m"><a href="https://repere.84.235.226.127.sslip.io/agenda/" target="_blank" rel="noopener" class="lnk">Passerelle — Espace scolaire</a></p>
+  </div>
   <form class="panel" data-form="url">
     <label class="fl" for="icsUrl">Lien ICS de l’emploi du temps</label>
     <div class="row"><input id="icsUrl" type="url" placeholder="https://... ou webcal://..." value="${esc(url)}" autocomplete="off"><button class="btn primary">Enregistrer et synchroniser</button></div>
@@ -686,57 +660,59 @@ function viewConnexionCompte(){
   <h2>Zone sensible</h2><div class="panel"><div class="row"><button class="btn" type="button" data-act="wipe">Tout effacer</button><button class="btn danger" type="button" data-act="deleteaccount">Supprimer le compte</button></div><p class="m">« Tout effacer » supprime tes données mais garde ton compte. « Supprimer le compte » supprime aussi ton compte de connexion. Ces actions sont définitives.</p></div>`;
 }
 
-// ----------------------------------------------------
-// NOUVEAUX RÉGLAGES DE MON LYCÉE
-// ----------------------------------------------------
 function viewSettingMails(){
   return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
   <h1>Réglages — Mails</h1>
-  <form class="panel" data-form="set-mails">
-    <label class="fl" for="mailCount">Nombre de mails affichés sur l’accueil</label>
-    <select id="mailCount" name="count">
-      <option value="3"${lyceePrefs.mails.count===3?' selected':''}>3 mails</option>
-      <option value="5"${lyceePrefs.mails.count===5?' selected':''}>5 mails</option>
-      <option value="10"${lyceePrefs.mails.count===10?' selected':''}>10 mails</option>
-    </select>
-    <label class="chk" style="margin-top:14px"><input type="checkbox" name="showContent"${lyceePrefs.mails.showContent?' checked':''}> Afficher un aperçu du contenu</label>
-    <div style="margin-top:16px"><button class="btn primary">Enregistrer</button></div>
-  </form>`;
+  <div class="panel">
+    <div style="margin-bottom:16px">
+      <label class="fl" for="mailCount">Nombre de mails affichés</label>
+      <select id="mailCount" data-pref="mails.count" style="width:100%">
+        <option value="3"${lyceePrefs.mails.count===3?' selected':''}>3 mails</option>
+        <option value="5"${lyceePrefs.mails.count===5?' selected':''}>5 mails</option>
+        <option value="10"${lyceePrefs.mails.count===10?' selected':''}>10 mails</option>
+      </select>
+    </div>
+    <div>
+      <label class="chk"><input type="checkbox" data-pref="mails.showContent"${lyceePrefs.mails.showContent?' checked':''}> Afficher un aperçu du contenu</label>
+    </div>
+  </div>`;
 }
 
 function viewSettingActu(){
   return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
   <h1>Réglages — Actualités</h1>
-  <form class="panel" data-form="set-actus">
-    <label class="fl" for="actuCount">Nombre d’actualités affichées</label>
-    <select id="actuCount" name="count">
-      <option value="2"${lyceePrefs.actus.count===2?' selected':''}>2 actualités</option>
-      <option value="4"${lyceePrefs.actus.count===4?' selected':''}>4 actualités</option>
-      <option value="6"${lyceePrefs.actus.count===6?' selected':''}>6 actualités</option>
-    </select>
-    <label class="chk" style="margin-top:14px"><input type="checkbox" name="images"${lyceePrefs.actus.images?' checked':''}> Activer les illustrations/images</label>
-    <div style="margin-top:16px"><button class="btn primary">Enregistrer</button></div>
-  </form>`;
+  <div class="panel">
+    <div style="margin-bottom:16px">
+      <label class="fl" for="actuCount">Nombre d’actualités affichées</label>
+      <select id="actuCount" data-pref="actus.count" style="width:100%">
+        <option value="2"${lyceePrefs.actus.count===2?' selected':''}>2 actualités</option>
+        <option value="4"${lyceePrefs.actus.count===4?' selected':''}>4 actualités</option>
+        <option value="6"${lyceePrefs.actus.count===6?' selected':''}>6 actualités</option>
+      </select>
+    </div>
+    <div>
+      <label class="chk"><input type="checkbox" data-pref="actus.images"${lyceePrefs.actus.images?' checked':''}> Activer les illustrations/images</label>
+    </div>
+  </div>`;
 }
 
 function viewSettingCahier(){
   return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
   <h1>Réglages — Cahier de textes</h1>
-  <form class="panel" data-form="set-cahier">
-    <label class="chk"><input type="checkbox" name="sortByDate"${lyceePrefs.cahier.sortByDate?' checked':''}> Trier prioritairement par date d’échéance</label>
-    <label class="chk" style="margin-top:10px"><input type="checkbox" name="hideDone"${lyceePrefs.cahier.hideDone?' checked':''}> Masquer automatiquement les devoirs terminés</label>
-    <div style="margin-top:16px"><button class="btn primary">Enregistrer</button></div>
-  </form>`;
-}
-
-function viewSettingProfil(){
-  return `<div class="sub-header"><button class="btn" data-act="view" data-v="set">‹ Retour aux réglages</button></div>
-  <h1>Réglages — Mon profil</h1>
-  <form class="panel" data-form="set-profil">
-    <label class="chk"><input type="checkbox" name="showName"${lyceePrefs.profil.showName?' checked':''}> Afficher l’e-mail / nom sur la carte profil</label>
-    <label class="chk" style="margin-top:10px"><input type="checkbox" name="showClass"${lyceePrefs.profil.showClass?' checked':''}> Afficher la classe et l’établissement</label>
-    <div style="margin-top:16px"><button class="btn primary">Enregistrer</button></div>
-  </form>`;
+  <div class="panel">
+    <div style="margin-bottom:16px">
+      <label class="fl" for="hwCount">Nombre de devoirs sur la page Mon lycée</label>
+      <select id="hwCount" data-pref="cahier.homeCount" style="width:100%">
+        <option value="3"${lyceePrefs.cahier.homeCount===3?' selected':''}>3 devoirs</option>
+        <option value="5"${lyceePrefs.cahier.homeCount===5?' selected':''}>5 devoirs</option>
+        <option value="10"${lyceePrefs.cahier.homeCount===10?' selected':''}>10 devoirs</option>
+      </select>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <label class="chk"><input type="checkbox" data-pref="cahier.sortByDate"${lyceePrefs.cahier.sortByDate?' checked':''}> Trier par date d’échéance</label>
+      <label class="chk"><input type="checkbox" data-pref="cahier.hideDone"${lyceePrefs.cahier.hideDone?' checked':''}> Masquer les devoirs terminés</label>
+    </div>
+  </div>`;
 }
 
 function viewSet(){
@@ -744,8 +720,8 @@ function viewSet(){
   const lyceeSettings=`<div class="panel" style="display:flex;flex-direction:column;gap:8px;">
     <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="set-mails">Mails</button>
     <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="set-actus">Actualités</button>
-    <button class="btn" style="text-align:left;width:100%;" data-act="set-cahier">Cahier de textes</button>
-    <button class="btn" style="text-align:left;width:100%;" data-act="set-profil">Mon profil</button>
+    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="set-cahier">Cahier de textes</button>
+    <button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="lycee-profil">Mon profil</button>
   </div>`;
   const connLinks=`<div class="panel" style="display:flex;flex-direction:column;gap:8px;"><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-ent">ENT</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-apparence">Apparence & Couleurs</button><button class="btn" style="text-align:left;width:100%;" data-act="view" data-v="connexion-compte">Compte</button></div>`;
   return `<h1>Réglages</h1><h2>Mon lycée</h2>${lyceeSettings}<h2>Connexion</h2>${connLinks}<h2>Notifications</h2><div class="panel"><div class="row"><label class="chk"><input type="checkbox" id="notifOn" ${n.on?'checked':''}> Rappel avant chaque cours</label><select id="notifMin" aria-label="Délai du rappel">${[5,10,15,30].map(x=>`<option value="${x}"${x===n.min?' selected':''}>${x} min avant</option>`).join('')}</select></div><p class="m">Fonctionne tant que cette page reste ouverte.</p></div>`;
@@ -759,7 +735,7 @@ function render(){
     'allhw':viewHw,
     'lycee-mail':viewLyceeMail,'lycee-actu':viewLyceeActu,'lycee-profil':viewLyceeProfil,
     'connexion-ent':viewConnexionEnt,'connexion-apparence':viewConnexionApparence,'connexion-compte':viewConnexionCompte,
-    'set-mails':viewSettingMails,'set-actus':viewSettingActu,'set-cahier':viewSettingCahier,'set-profil':viewSettingProfil
+    'set-mails':viewSettingMails,'set-actus':viewSettingActu,'set-cahier':viewSettingCahier
   }[view]||viewHome;
   const mainEl=$('#main');
   if(mainEl) mainEl.innerHTML=f();
@@ -919,12 +895,11 @@ function setAuthMode(mode){
   document.querySelectorAll('#gate [data-act="authmode"]').forEach(b=>b.classList.toggle('on',b.dataset.v===(register?'register':'login')));
   const sub=document.querySelector('#gate .sub');if(sub)sub.textContent=register?'Crée ton compte pour commencer.':'Content de te revoir.';
 
-  // Remplacement du lien mot de passe oublié / conditions
   const existingExtras=form.querySelector('.terms')||form.querySelector('.forgot-link');
   if(existingExtras)existingExtras.remove();
   const btnSub=submit;
   if(register){
-    const div=document.createElement('label');div.className='chk terms';id:div.id='termsRow';
+    const div=document.createElement('label');div.className='chk terms';div.id='termsRow';
     div.innerHTML=`<input type="checkbox" id="authTerms"><span>J’accepte les <a href="conditions.html" target="_blank" rel="noopener">conditions d’utilisation</a></span>`;
     form.insertBefore(div,btnSub);
   }else{
@@ -935,7 +910,6 @@ function setAuthMode(mode){
   const am=$('#authMessage');if(am){am.style.color='';am.textContent='';}
 }
 
-// Gestion de la modale Mot de passe oublié & Nouveau mot de passe
 function openForgotPasswordModal(){
   const root=$('#modalRoot');
   if(!root)return;
@@ -1018,11 +992,10 @@ document.addEventListener('click',async e=>{
   else if(a==='wipe'){if(confirm("Confirmer : tout effacer ?"))wipeAll();}
 });
 
-// Écouteur global pour les formulaires (connexion, réinitialisation, réglages)
 document.addEventListener('submit',async e=>{
   const formEl=e.target;
   const f=formEl.dataset.form;
-  if(!f)return;
+  if(!f&&formEl.id!=='forgotForm'&&formEl.id!=='resetForm')return;
   e.preventDefault();
 
   if(f==='hw'){
@@ -1096,44 +1069,21 @@ document.addEventListener('submit',async e=>{
       window.location.reload();
     }catch(err){mg.textContent=err.message||'Erreur de mise à jour.';}
   }
-  // Enregistrement des réglages Mon Lycée
-  else if(f==='set-mails'){
-    const fd=new FormData(formEl);
-    lyceePrefs.mails.count=+fd.get('count');
-    lyceePrefs.mails.showContent=!!fd.get('showContent');
-    store.set('lyceePrefs',lyceePrefs);
-    pushSettings();
-    view='set';render();
-  }
-  else if(f==='set-actus'){
-    const fd=new FormData(formEl);
-    lyceePrefs.actus.count=+fd.get('count');
-    lyceePrefs.actus.images=!!fd.get('images');
-    store.set('lyceePrefs',lyceePrefs);
-    pushSettings();
-    view='set';render();
-  }
-  else if(f==='set-cahier'){
-    const fd=new FormData(formEl);
-    lyceePrefs.cahier.sortByDate=!!fd.get('sortByDate');
-    lyceePrefs.cahier.hideDone=!!fd.get('hideDone');
-    store.set('lyceePrefs',lyceePrefs);
-    pushSettings();
-    view='set';render();
-  }
-  else if(f==='set-profil'){
-    const fd=new FormData(formEl);
-    lyceePrefs.profil.showName=!!fd.get('showName');
-    lyceePrefs.profil.showClass=!!fd.get('showClass');
-    store.set('lyceePrefs',lyceePrefs);
-    pushSettings();
-    view='set';render();
-  }
 });
 
+// Enregistrement automatique instantané pour les réglages de Mon lycée
 document.addEventListener('change',async e=>{
   const t=e.target;
-  if(t.id==='icsFile'&&t.files[0]){
+  if(t.dataset && t.dataset.pref){
+    const path=t.dataset.pref.split('.');
+    const val=t.type==='checkbox'?t.checked:(t.type==='number'||!isNaN(t.value)?+t.value:t.value);
+    if(path.length===2){
+      lyceePrefs[path[0]][path[1]]=val;
+      store.set('lyceePrefs',lyceePrefs);
+      pushSettings();
+    }
+  }
+  else if(t.id==='icsFile'&&t.files[0]){
     try{
       const text=await t.files[0].text();
       loadICS(text);store.set('icsText',text);store.set('demo',false);
@@ -1152,15 +1102,12 @@ document.addEventListener('change',async e=>{
   }
 });
 
-['gesturestart','gesturechange','gestureend'].forEach(t=>document.addEventListener(t,e=>e.preventDefault()));
-
 let wasMobileView=isMobileView();
 window.addEventListener('resize',()=>{const m=isMobileView();if(m!==wasMobileView){wasMobileView=m;if(user&&view==='agenda')render();}});
 
 (async function boot(){
   try{
     try{localStorage.removeItem('lapsusSession');}catch(e){}
-    // Détection si l'utilisateur arrive via un lien de récupération de mot de passe Supabase (hash type #access_token=... ou type=recovery)
     if(window.location.hash.includes('type=recovery')||window.location.hash.includes('access_token=')){
       setTimeout(()=>{openResetPasswordModal();},500);
     }
