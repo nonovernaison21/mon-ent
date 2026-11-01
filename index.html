@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=DM+Sans:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="style.css?v=17">
+<link rel="stylesheet" href="style.css?v=20">
 <style>
 [hidden]{display:none!important}
 body.locked .top,body.locked .shell{display:none}
@@ -35,11 +35,20 @@ body.locked .top,body.locked .shell{display:none}
 .gate-card .terms span{font-size:14px;line-height:1.35}
 .gate-card .terms a{color:var(--accent);text-decoration:underline}
 a.btn{display:inline-block;text-decoration:none}
+.forgot-link{display:block;margin:-6px 0 14px;font-size:13px;color:var(--muted);background:none;border:0;padding:0;text-align:left;cursor:pointer}
+.forgot-link:hover{color:var(--accent);text-decoration:underline}
+/* Modale générique */
+.modal-overlay{position:fixed;inset:0;z-index:200;display:grid;place-items:center;background:rgba(0,0,0,0.45);padding:16px;backdrop-filter:blur(4px)}
+.modal-card{width:100%;max-width:380px;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:24px;box-shadow:0 12px 32px rgba(0,0,0,0.15)}
+.modal-card h3{font:700 20px/1.2 var(--f-display);margin:0 0 8px}
+.modal-card p{color:var(--muted);font-size:14px;margin:0 0 16px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
 </style>
 </head>
 <body class="locked">
 <div id="loader" class="loader" role="status" aria-live="polite"><div class="lg"><img src="logo.svg" alt="" width="84" height="84"><div class="lsh"></div><p class="lt" id="loaderTitle">Chargement en cours…</p><p class="ls" id="loaderSub">Ton espace arrive.</p></div></div>
 <div id="gate" hidden></div>
+<div id="modalRoot"></div>
 <header class="top">
   <div class="brand"><img src="logo.svg" alt="" width="28" height="28"><span>Lapsus</span></div>
   <div class="status" id="status"></div>
@@ -55,6 +64,6 @@ a.btn{display:inline-block;text-decoration:none}
   <main id="main"></main>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="app.js?v=19"></script>
+<script src="app.js?v=20"></script>
 </body>
 </html>
